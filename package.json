@@ -1,0 +1,20 @@
+{
+  "name": "backtrack",
+  "version": "0.1.0",
+  "description": "Local webpage text and screenshot capture with browser extensions and searchable archive.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "build:extensions": "node scripts/build-extensions.js"
+  },
+  "keywords": [
+    "browser-extension",
+    "local-search",
+    "archive"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

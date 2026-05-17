@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>backtrack</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <h1>backtrack</h1>
+        <form id="search-form" class="search">
+          <input id="query" type="search" autocomplete="off" placeholder="Search names, phrases, URLs">
+          <button type="submit">Search</button>
+        </form>
+        <div class="menu">
+          <button type="button" id="menu-toggle" class="icon-button" aria-expanded="false" aria-controls="menu-panel" title="Menu">☰</button>
+          <div id="menu-panel" class="menu-panel" hidden>
+            <label for="sort-mode">Sort findings</label>
+            <select id="sort-mode">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="domain">Domain</option>
+              <option value="title">Title</option>
+            </select>
+            <button type="button" id="clear-findings" class="danger-button">Clear Findings</button>
+          </div>
+        </div>
+      </header>
+      <section class="phrases">
+        <div>
+          <h2>Flagged names and phrases</h2>
+          <p>Matches are collected into this OSINT section as you browse.</p>
+        </div>
+        <form id="phrases-form">
+          <textarea id="phrases" rows="4" placeholder="Cody Bernardy&#10;Example Company&#10;username123"></textarea>
+          <button type="submit">Save Flags</button>
+        </form>
+      </section>
+      <nav class="tabs">
+        <button type="button" id="recent-tab">Recent</button>
+        <button type="button" id="flagged-tab">Flagged</button>
+      </nav>
+      <section id="status" class="status">Recent captures</section>
+      <section id="results" class="results"></section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
