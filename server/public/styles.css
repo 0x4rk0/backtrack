@@ -33,27 +33,34 @@ body {
   margin-bottom: 20px;
 }
 
-.phrases {
+.phrases,
+.blocked-sites {
   display: grid;
   grid-template-columns: 280px 1fr;
   gap: 18px;
   align-items: start;
   padding: 16px 0;
-  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
 
-.phrases h2 {
+.phrases {
+  border-top: 1px solid var(--line);
+}
+
+.phrases h2,
+.blocked-sites h2 {
   margin: 0 0 4px;
   font-size: 18px;
 }
 
-.phrases p {
+.phrases p,
+.blocked-sites p {
   margin: 0;
   color: var(--muted);
 }
 
-#phrases-form {
+#phrases-form,
+#blocked-sites-form {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 10px;
@@ -167,6 +174,42 @@ select {
 
 .results {
   display: grid;
+  gap: 18px;
+}
+
+.source-group {
+  display: grid;
+  gap: 10px;
+}
+
+.source-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.source-header h2 {
+  margin: 0 0 2px;
+  font-size: 18px;
+}
+
+.source-header a {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.source-header span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.source-results {
+  display: grid;
   gap: 12px;
 }
 
@@ -227,6 +270,13 @@ select {
   color: #2d3743;
 }
 
+.capture-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 12px 0 0;
+}
+
 .snippet mark,
 .match mark {
   background: #ffe27a;
@@ -260,9 +310,17 @@ select {
 @media (max-width: 720px) {
   .topbar,
   .result,
+  .source-header,
   .phrases,
-  #phrases-form {
+  .blocked-sites,
+  #phrases-form,
+  #blocked-sites-form {
     grid-template-columns: 1fr;
+  }
+
+  .source-header {
+    display: grid;
+    align-items: start;
   }
 
   .menu {

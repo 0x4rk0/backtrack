@@ -4,11 +4,15 @@ const http = require("http");
 const path = require("path");
 
 const PORT = Number(process.env.BACKTRACK_PORT || 4317);
+const DEBUG_MODE = process.env.BACKTRACK_DEBUG || "";
+const DEBUG_ENABLED = DEBUG_MODE === "1" || DEBUG_MODE === "true" || DEBUG_MODE === "full";
+const DEBUG_FULL = DEBUG_MODE === "full";
 const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data", "backtrack");
 const CAPTURE_DIR = path.join(DATA_DIR, "captures");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const PHRASES_FILE = path.join(DATA_DIR, "phrases.json");
+const BLOCKED_SITES_FILE = path.join(DATA_DIR, "blocked-sites.json");
 const PUBLIC_DIR = path.join(ROOT, "server", "public");
 
 const JSON_HEADERS = {
@@ -17,6 +21,7 @@ const JSON_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
   "Content-Type": "application/json; charset=utf-8"
 };
+const eventClients = new Set();
 
 function ensureStore() {
   fs.mkdirSync(CAPTURE_DIR, { recursive: true });
@@ -25,6 +30,9 @@ function ensureStore() {
   }
   if (!fs.existsSync(PHRASES_FILE)) {
     fs.writeFileSync(PHRASES_FILE, "[]\n");
+  }
+  if (!fs.existsSync(BLOCKED_SITES_FILE)) {
+    fs.writeFileSync(BLOCKED_SITES_FILE, "[]\n");
   }
 }
 
@@ -48,12 +56,74 @@ function writePhrases(phrases) {
   return cleaned;
 }
 
+function readBlockedSites() {
+  ensureStore();
+  return JSON.parse(fs.readFileSync(BLOCKED_SITES_FILE, "utf8"));
+}
+
+function writeBlockedSites(sites) {
+  const cleaned = [
+    ...new Set(
+      sites
+        .map((site) => String(site).trim().toLowerCase())
+        .map((site) => site.replace(/^https?:\/\//, "").replace(/\/$/, ""))
+        .filter(Boolean)
+    )
+  ];
+  fs.writeFileSync(BLOCKED_SITES_FILE, `${JSON.stringify(cleaned, null, 2)}\n`);
+  return cleaned;
+}
+
 function domainFor(row) {
   try {
     return new URL(row.url).hostname.replace(/^www\./, "");
   } catch (error) {
     return "";
   }
+}
+
+function hostnameFor(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch (error) {
+    return "";
+  }
+}
+
+function normalizedUrl(url) {
+  try {
+    return new URL(url).href.toLowerCase();
+  } catch (error) {
+    return String(url || "").toLowerCase();
+  }
+}
+
+function isLocalhost(url) {
+  const hostname = hostnameFor(url);
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+}
+
+function siteMatches(url, site) {
+  const rule = String(site || "").trim().toLowerCase();
+  if (!rule) {
+    return false;
+  }
+
+  const hostname = hostnameFor(url);
+  if (!hostname) {
+    return false;
+  }
+
+  if (rule.includes("/")) {
+    return normalizedUrl(url).includes(rule);
+  }
+
+  const domain = rule.replace(/^\*\./, "");
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
+
+function isBlockedUrl(url) {
+  return isLocalhost(url) || readBlockedSites().some((site) => siteMatches(url, site));
 }
 
 function sortRows(rows, sort) {
@@ -79,6 +149,59 @@ function sortRows(rows, sort) {
 function sendJson(res, statusCode, value) {
   res.writeHead(statusCode, JSON_HEADERS);
   res.end(JSON.stringify(value));
+}
+
+function sendEvent(res, event, value) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(value)}\n\n`);
+}
+
+function broadcastEvent(event, value) {
+  for (const res of eventClients) {
+    sendEvent(res, event, value);
+  }
+}
+
+function handleEvents(req, res) {
+  res.writeHead(200, {
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "X-Accel-Buffering": "no"
+  });
+  res.write(": connected\n\n");
+  eventClients.add(res);
+  req.on("close", () => {
+    eventClients.delete(res);
+  });
+}
+
+function debugCapture(payload) {
+  if (!DEBUG_ENABLED) {
+    return;
+  }
+
+  const text = String(payload.text || "");
+  const html = String(payload.html || "");
+  const screenshot = String(payload.screenshot || "");
+  const summary = {
+    url: payload.url,
+    title: payload.title,
+    source: payload.source,
+    metrics: payload.metrics || null,
+    matches: payload.matches || [],
+    screenshotMeta: payload.screenshotMeta || null,
+    textLength: text.length,
+    textPreview: text.slice(0, 500),
+    text: DEBUG_FULL ? text : `[hidden in summary mode: ${text.length} chars]`,
+    htmlLength: html.length,
+    htmlPreview: html.slice(0, 500),
+    html: DEBUG_FULL ? html : `[hidden in summary mode: ${html.length} chars]`,
+    screenshotLength: screenshot.length,
+    screenshot: DEBUG_FULL ? screenshot : screenshot ? "[hidden data URL]" : null
+  };
+  console.log(`[backtrack] received capture\n${JSON.stringify(summary, null, 2)}`);
 }
 
 function readBody(req) {
@@ -108,6 +231,15 @@ function safeTitle(title) {
   return String(title || "Untitled").slice(0, 300);
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function writeScreenshot(id, screenshot) {
   if (!screenshot || typeof screenshot !== "string") {
     return null;
@@ -122,6 +254,151 @@ function writeScreenshot(id, screenshot) {
   const filename = `${id}.${ext}`;
   fs.writeFileSync(path.join(CAPTURE_DIR, filename), Buffer.from(match[2], "base64"));
   return `/captures/${filename}`;
+}
+
+function writeSnapshot(id, html) {
+  if (!html || typeof html !== "string") {
+    return null;
+  }
+
+  const cleaned = html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "");
+  const filename = `${id}.html`;
+  fs.writeFileSync(path.join(CAPTURE_DIR, filename), cleaned);
+  return `/captures/${filename}`;
+}
+
+function readerHtml(row, text) {
+  const paragraphs = normalizeText(text)
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, " ").trim())
+    .filter(Boolean)
+    .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(row.title || row.url)} - backtrack capture</title>
+    <style>
+      :root { color-scheme: light; --ink: #18202a; --muted: #657282; --line: #d9dee6; --bg: #f6f7f9; --panel: #fff; }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(860px, calc(100% - 32px)); margin: 32px auto; }
+      header { margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+      h1 { margin: 0 0 8px; font-size: 28px; line-height: 1.2; }
+      .meta { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+      a { color: #084f5f; }
+      article { padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+      p { margin: 0 0 1em; overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>${escapeHtml(row.title || row.url)}</h1>
+        <div class="meta">${escapeHtml(new Date(row.createdAt).toLocaleString())} &middot; ${escapeHtml(row.url)}</div>
+        <div class="actions">
+          <a href="${escapeHtml(row.url)}" target="_blank" rel="noreferrer">Original page</a>
+          <a href="${escapeHtml(row.textFile)}" target="_blank" rel="noreferrer">Raw text</a>
+          ${row.screenshotFile ? `<a href="${escapeHtml(row.screenshotFile)}" target="_blank" rel="noreferrer">Screenshot</a>` : ""}
+          ${row.htmlFile ? `<a href="${escapeHtml(row.htmlFile)}" target="_blank" rel="noreferrer">Static HTML snapshot</a>` : ""}
+        </div>
+      </header>
+      ${row.screenshotFile ? `<p><img src="${escapeHtml(row.screenshotFile)}" alt="" style="width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#eef1f4;"></p>` : ""}
+      <article>
+        ${paragraphs || "<p>No readable text was captured.</p>"}
+      </article>
+    </main>
+  </body>
+</html>`;
+}
+
+function captureViewHtml(row) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(row.title || row.url)} - backtrack view</title>
+    <style>
+      :root { color-scheme: light; --ink: #18202a; --muted: #657282; --line: #d9dee6; --bg: #f6f7f9; --panel: #fff; }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(1280px, calc(100% - 32px)); margin: 28px auto; }
+      header { margin-bottom: 16px; }
+      h1 { margin: 0 0 6px; font-size: 26px; line-height: 1.2; }
+      .meta { color: var(--muted); overflow-wrap: anywhere; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+      a { color: #084f5f; }
+      .grid { display: grid; grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr); gap: 16px; align-items: start; }
+      section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+      h2 { margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 15px; }
+      img { display: block; width: 100%; height: auto; background: #eef1f4; }
+      iframe { display: block; width: 100%; height: 78vh; border: 0; background: #fff; }
+      .empty { padding: 18px; color: var(--muted); }
+      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } iframe { height: 70vh; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>${escapeHtml(row.title || row.url)}</h1>
+        <div class="meta">${escapeHtml(new Date(row.createdAt).toLocaleString())} &middot; ${escapeHtml(row.url)}</div>
+        <div class="actions">
+          <a href="${escapeHtml(row.url)}" target="_blank" rel="noreferrer">Original page</a>
+          <a href="${escapeHtml(row.readerFile || `/reader/${row.id}`)}" target="_blank" rel="noreferrer">Readable text</a>
+          <a href="${escapeHtml(row.textFile)}" target="_blank" rel="noreferrer">Raw text</a>
+        </div>
+      </header>
+      <div class="grid">
+        <section>
+          <h2>Captured screenshot</h2>
+          ${row.screenshotFile ? `<a href="${escapeHtml(row.screenshotFile)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(row.screenshotFile)}" alt=""></a>` : `<div class="empty">No screenshot was captured.</div>`}
+        </section>
+        <section>
+          <h2>Static local snapshot</h2>
+          ${row.htmlFile ? `<iframe src="${escapeHtml(row.htmlFile)}" sandbox=""></iframe>` : `<div class="empty">No HTML snapshot was captured.</div>`}
+        </section>
+      </div>
+    </main>
+  </body>
+</html>`;
+}
+
+function handleCaptureView(req, res, id) {
+  const row = readIndex().find((item) => item.id === id);
+  if (!row) {
+    res.writeHead(404);
+    res.end("Not found");
+    return;
+  }
+
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(captureViewHtml(row));
+}
+
+function handleReader(req, res, id) {
+  const row = readIndex().find((item) => item.id === id);
+  if (!row) {
+    res.writeHead(404);
+    res.end("Not found");
+    return;
+  }
+
+  const textPath = path.join(CAPTURE_DIR, `${id}.txt`);
+  if (!fs.existsSync(textPath)) {
+    res.writeHead(404);
+    res.end("Not found");
+    return;
+  }
+
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(readerHtml(row, fs.readFileSync(textPath, "utf8")));
 }
 
 function clearCaptures() {
@@ -157,9 +434,14 @@ function cleanMatches(matches) {
 async function handleCreateCapture(req, res) {
   try {
     const payload = JSON.parse(await readBody(req));
+    debugCapture(payload);
     const url = String(payload.url || "");
     if (!/^https?:\/\//i.test(url)) {
       sendJson(res, 400, { error: "url must be http or https" });
+      return;
+    }
+    if (isBlockedUrl(url)) {
+      sendJson(res, 202, { skipped: true, blocked: true });
       return;
     }
 
@@ -180,6 +462,9 @@ async function handleCreateCapture(req, res) {
       title: safeTitle(payload.title),
       createdAt,
       textFile: `/captures/${id}.txt`,
+      readerFile: `/reader/${id}`,
+      viewFile: `/view/${id}`,
+      htmlFile: writeSnapshot(id, payload.html),
       screenshotFile: writeScreenshot(id, payload.screenshot),
       screenshotMeta: payload.screenshotMeta || null,
       textLength: text.length,
@@ -189,6 +474,14 @@ async function handleCreateCapture(req, res) {
     const rows = readIndex();
     rows.unshift(row);
     writeIndex(rows.slice(0, 10000));
+    if (row.screenshotFile) {
+      broadcastEvent("screenshot", {
+        id: row.id,
+        url: row.url,
+        screenshotFile: row.screenshotFile,
+        createdAt: row.createdAt
+      });
+    }
     sendJson(res, 201, row);
   } catch (error) {
     sendJson(res, 400, { error: error.message });
@@ -205,6 +498,20 @@ function handlePhrases(req, res) {
     .then((body) => {
       const payload = JSON.parse(body);
       sendJson(res, 200, { phrases: writePhrases(payload.phrases || []) });
+    })
+    .catch((error) => sendJson(res, 400, { error: error.message }));
+}
+
+function handleBlockedSites(req, res) {
+  if (req.method === "GET") {
+    sendJson(res, 200, { blockedSites: readBlockedSites() });
+    return;
+  }
+
+  readBody(req)
+    .then((body) => {
+      const payload = JSON.parse(body);
+      sendJson(res, 200, { blockedSites: writeBlockedSites(payload.blockedSites || []) });
     })
     .catch((error) => sendJson(res, 400, { error: error.message }));
 }
@@ -299,6 +606,18 @@ function serveFile(res, filePath) {
 }
 
 function handleStatic(req, res, url) {
+  const viewMatch = url.pathname.match(/^\/view\/([0-9a-f-]+)$/i);
+  if (viewMatch) {
+    handleCaptureView(req, res, viewMatch[1]);
+    return;
+  }
+
+  const readerMatch = url.pathname.match(/^\/reader\/([0-9a-f-]+)$/i);
+  if (readerMatch) {
+    handleReader(req, res, readerMatch[1]);
+    return;
+  }
+
   if (url.pathname.startsWith("/captures/")) {
     const filePath = path.join(DATA_DIR, url.pathname);
     if (!filePath.startsWith(CAPTURE_DIR)) {
@@ -335,11 +654,15 @@ http
       sendJson(res, 200, {
         results: sortRows(readIndex(), url.searchParams.get("sort") || "newest").slice(0, 50)
       });
+    } else if (req.method === "GET" && url.pathname === "/api/events") {
+      handleEvents(req, res);
     } else if (req.method === "POST" && url.pathname === "/api/clear") {
       clearCaptures();
       sendJson(res, 200, { ok: true });
     } else if ((req.method === "GET" || req.method === "POST") && url.pathname === "/api/phrases") {
       handlePhrases(req, res);
+    } else if ((req.method === "GET" || req.method === "POST") && url.pathname === "/api/blocked-sites") {
+      handleBlockedSites(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/flagged") {
       handleFlagged(req, res);
     } else {
@@ -348,4 +671,7 @@ http
   })
   .listen(PORT, "127.0.0.1", () => {
     console.log(`backtrack listening on http://127.0.0.1:${PORT}`);
+    if (DEBUG_ENABLED) {
+      console.log(`backtrack debug logging enabled (${DEBUG_FULL ? "full payloads" : "summaries"})`);
+    }
   });

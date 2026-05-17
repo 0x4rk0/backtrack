@@ -48,6 +48,17 @@ This creates:
 - `extension/dist/chrome`
 - `extension/dist/firefox`
 
+To create browser release packages:
+
+```sh
+npm run package:extensions
+```
+
+This creates:
+
+- `extension/releases/backtrack-chrome.zip`
+- `extension/releases/backtrack-firefox.xpi`
+
 ## Start the Local Server
 
 Start backtrack:
@@ -72,7 +83,16 @@ BACKTRACK_PORT=5000 npm start
 
 If you change the port, also update `SERVER_URL` in `extension/src/background.js` and rebuild the extensions.
 
-## Install in Chrome or Chromium
+## Normal Browser Add-on Install
+
+Chrome and Firefox stable releases require add-ons to be signed for normal install. The generated release packages are the artifacts to submit for signing:
+
+- Chrome: upload `extension/releases/backtrack-chrome.zip` to the Chrome Web Store developer dashboard.
+- Firefox: upload `extension/releases/backtrack-firefox.xpi` to Firefox Add-ons / AMO for signing. For self-distribution, download the signed XPI from AMO and install that file.
+
+After signing, users install backtrack like a normal browser add-on from the store page or signed XPI. Local unpacked loading is only a development path.
+
+## Developer Install in Chrome or Chromium
 
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode**.
@@ -80,7 +100,7 @@ If you change the port, also update `SERVER_URL` in `extension/src/background.js
 4. Select `extension/dist/chrome`.
 5. Confirm the backtrack extension appears in the extensions list.
 
-## Install in Firefox
+## Developer Install in Firefox
 
 For temporary local use:
 
@@ -105,10 +125,14 @@ Search results include:
 - Original URL
 - Capture time
 - Matching text snippet
-- Link to the captured text
+- Formatted reader view for captured text
+- Capture view with screenshot and static local page snapshot, when available
+- Raw captured text
 - Screenshot of the visible tab, when browser permissions allow it
 
 Screenshots capture the current visible browser viewport. backtrack does not scroll the page while capturing.
+The dashboard refreshes automatically and groups captures by base URL.
+Local page snapshots remove scripts and are meant for review, not for preserving a fully interactive copy of the original site.
 
 ## Add OSINT Flags
 
@@ -131,6 +155,22 @@ When a flagged phrase appears on a captured page, backtrack highlights the text 
 
 The add-on places a small backtrack status pill on webpages. Click it to manually save the current page.
 
+## Block Capture Sites
+
+backtrack never captures the local server UI at `127.0.0.1`, `localhost`, or `[::1]`.
+
+To skip other sites:
+
+1. Visit `http://127.0.0.1:4317`.
+2. Add one host or URL path per line in **Blocked capture sites**.
+3. Click **Save Blocks**.
+4. Reload the browser add-on if you need the change to apply immediately; otherwise it refreshes the list automatically within about 30 seconds.
+
+Examples:
+
+- `example.com` skips `example.com` and its subdomains.
+- `example.com/private` skips URLs containing that path.
+
 ## Stored Data
 
 Captured data is stored locally in:
@@ -143,7 +183,9 @@ Important files:
 
 - `data/backtrack/index.json` stores capture metadata.
 - `data/backtrack/phrases.json` stores flagged names and phrases.
+- `data/backtrack/blocked-sites.json` stores sites skipped by capture.
 - `data/backtrack/captures/*.txt` stores extracted webpage text.
+- `data/backtrack/captures/*.html` stores static local page snapshots.
 - `data/backtrack/captures/*.png` stores screenshots.
 
 This directory may contain sensitive browsing data. Do not commit it or share it casually.

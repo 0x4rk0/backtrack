@@ -5,7 +5,8 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "build:extensions": "node scripts/build-extensions.js"
+    "build:extensions": "node scripts/build-extensions.js",
+    "package:extensions": "npm run build:extensions && node scripts/package-extensions.js"
   },
   "keywords": [
     "browser-extension",

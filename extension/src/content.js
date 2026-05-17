@@ -1,8 +1,13 @@
 (() => {
+  const DEBUG_MODE = "__BACKTRACK_DEBUG__";
+  const DEBUG_ENABLED = DEBUG_MODE === "1" || DEBUG_MODE === "true" || DEBUG_MODE === "full";
+  const DEBUG_FULL = DEBUG_MODE === "full";
   const MARK_CLASS = "backtrack-highlight";
   const PAUSE_KEY = "backtrackPaused";
   let flaggedPhrases = [];
+  let blockedSites = [];
   let lastMatchCount = 0;
+  let captureInFlight = false;
   let statusEl;
   let menuEl;
 
@@ -184,6 +189,37 @@
     return clone.innerText.replace(/\s+\n/g, "\n").replace(/\n{4,}/g, "\n\n\n").trim();
   }
 
+  function snapshotHtml() {
+    const clone = document.documentElement ? document.documentElement.cloneNode(true) : null;
+    if (!clone) {
+      return "";
+    }
+
+    clone
+      .querySelectorAll("script, noscript, iframe, object, embed, #backtrack-widget, #backtrack-menu")
+      .forEach((node) => node.remove());
+
+    clone.querySelectorAll("*").forEach((node) => {
+      for (const attribute of [...node.attributes]) {
+        if (/^on/i.test(attribute.name)) {
+          node.removeAttribute(attribute.name);
+        }
+      }
+    });
+
+    const head = clone.querySelector("head") || clone.insertBefore(document.createElement("head"), clone.firstChild);
+    const base = document.createElement("base");
+    base.href = location.href;
+    head.insertBefore(base, head.firstChild);
+
+    const meta = document.createElement("meta");
+    meta.setAttribute("http-equiv", "Content-Security-Policy");
+    meta.setAttribute("content", "script-src 'none'; object-src 'none'; base-uri *");
+    head.insertBefore(meta, base.nextSibling);
+
+    return `<!doctype html>\n${clone.outerHTML}`;
+  }
+
   function viewportMetrics() {
     return {
       width: window.innerWidth,
@@ -194,6 +230,69 @@
       scrollX: window.scrollX,
       scrollY: window.scrollY
     };
+  }
+
+  function hostnameFor(url) {
+    try {
+      return new URL(url).hostname.toLowerCase();
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function normalizedUrl(url) {
+    try {
+      return new URL(url).href.toLowerCase();
+    } catch (error) {
+      return String(url || "").toLowerCase();
+    }
+  }
+
+  function isLocalhost(url) {
+    const hostname = hostnameFor(url);
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  }
+
+  function siteMatches(url, site) {
+    const rule = String(site || "").trim().toLowerCase();
+    if (!rule) {
+      return false;
+    }
+
+    const hostname = hostnameFor(url);
+    if (!hostname) {
+      return false;
+    }
+
+    if (rule.includes("/")) {
+      return normalizedUrl(url).includes(rule);
+    }
+
+    const domain = rule.replace(/^\*\./, "");
+    return hostname === domain || hostname.endsWith(`.${domain}`);
+  }
+
+  function isBlockedUrl(url) {
+    return isLocalhost(url) || blockedSites.some((site) => siteMatches(url, site));
+  }
+
+  function debugPayload(label, payload) {
+    if (!DEBUG_ENABLED) {
+      return;
+    }
+
+    const text = String(payload.text || "");
+    const html = String(payload.html || "");
+    const summary = {
+      ...payload,
+      textLength: text.length,
+      textPreview: text.slice(0, 500),
+      text: DEBUG_FULL ? text : `[hidden in summary mode: ${text.length} chars]`,
+      htmlLength: html.length,
+      htmlPreview: html.slice(0, 500),
+      html: DEBUG_FULL ? html : `[hidden in summary mode: ${html.length} chars]`
+    };
+    console.debug(`[backtrack] ${label}`, summary);
   }
 
   function textNodes(root) {
@@ -308,7 +407,24 @@
     });
   }
 
+  function requestBlockedSites() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "BACKTRACK_GET_BLOCKED_SITES" }, (response) => {
+        resolve((response && response.blockedSites) || []);
+      });
+    });
+  }
+
   async function sendCapture(source) {
+    if (captureInFlight) {
+      return;
+    }
+
+    if (isBlockedUrl(location.href)) {
+      setStatus("backtrack blocked here");
+      return;
+    }
+
     if (source !== "manual" && isPaused()) {
       setStatus("backtrack paused");
       return;
@@ -321,20 +437,35 @@
     }
 
     setStatus(source === "manual" ? "saving page..." : "capturing...");
+    captureInFlight = true;
+    const payload = {
+      url: location.href,
+      title: document.title,
+      text,
+      html: snapshotHtml(),
+      metrics: viewportMetrics(),
+      matches: findPhraseMatches(flaggedPhrases, text),
+      source
+    };
+    debugPayload("content capture payload", payload);
     chrome.runtime.sendMessage(
       {
         type: "BACKTRACK_CAPTURE",
-        payload: {
-          url: location.href,
-          title: document.title,
-          text,
-          metrics: viewportMetrics(),
-          matches: findPhraseMatches(flaggedPhrases, text),
-          source
-        }
+        payload
       },
-      () => {
-        setStatus(lastMatchCount ? `saved · ${lastMatchCount} marked` : "saved");
+      (response) => {
+        captureInFlight = false;
+        if (chrome.runtime.lastError || !response) {
+          setStatus("backtrack: server unavailable");
+        } else if (response.blocked) {
+          setStatus("backtrack blocked here");
+        } else if (response.skipped) {
+          setStatus("backtrack: skipped");
+        } else if (response.saved) {
+          setStatus(lastMatchCount ? `saved · ${lastMatchCount} marked` : "saved");
+        } else {
+          setStatus("backtrack: save failed");
+        }
         setTimeout(() => {
           updatePauseUi();
           if (!isPaused()) {
@@ -348,7 +479,11 @@
   async function initialize() {
     injectStyles();
     createWidget();
-    flaggedPhrases = await requestPhrases();
+    [flaggedPhrases, blockedSites] = await Promise.all([requestPhrases(), requestBlockedSites()]);
+    if (isBlockedUrl(location.href)) {
+      setStatus("backtrack blocked here");
+      return;
+    }
     lastMatchCount = highlightPhrases(flaggedPhrases);
     updatePauseUi();
     if (!isPaused()) {
