@@ -85,7 +85,3 @@ Backtrack saves local capture data in `data/backtrack/`:
 - `captures/*.png` stores screenshots
 - `captures/*-images/` stores downloaded JPG/PNG page images
 - `settings.json` stores local product settings
-
-## Privacy
-
-Backtrack stores page text and screenshots locally. Treat `data/backtrack/` as sensitive and do not commit it.
