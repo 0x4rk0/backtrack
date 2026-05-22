@@ -1,6 +1,8 @@
 const crypto = require("crypto");
+const dns = require("dns").promises;
 const fs = require("fs");
 const http = require("http");
+const net = require("net");
 const path = require("path");
 
 const PORT = Number(process.env.BACKTRACK_PORT || 4317);
@@ -163,6 +165,66 @@ function normalizedUrl(url) {
 function isLocalhost(url) {
   const hostname = hostnameFor(url);
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+}
+
+function isPrivateIp(value) {
+  if (net.isIP(value) === 4) {
+    const parts = value.split(".").map(Number);
+    if (parts[0] === 10 || parts[0] === 127) return true;
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 0) return true;
+    return false;
+  }
+
+  if (net.isIP(value) === 6) {
+    const normalized = value.toLowerCase();
+    return (
+      normalized === "::1" ||
+      normalized.startsWith("fc") ||
+      normalized.startsWith("fd") ||
+      normalized.startsWith("fe80:") ||
+      normalized.startsWith("::ffff:127.") ||
+      normalized.startsWith("::ffff:10.") ||
+      normalized.startsWith("::ffff:192.168.") ||
+      /^::ffff:172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
+    );
+  }
+
+  return false;
+}
+
+async function isSafeRemoteUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    return false;
+  }
+
+  if (!/^https?:$/i.test(parsed.protocol)) {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return false;
+  }
+
+  if (net.isIP(hostname)) {
+    return !isPrivateIp(hostname);
+  }
+
+  try {
+    const records = await dns.lookup(hostname, { all: true });
+    if (!records.length) {
+      return false;
+    }
+    return records.every((record) => !isPrivateIp(record.address));
+  } catch (error) {
+    return false;
+  }
 }
 
 function siteMatches(url, site) {
@@ -365,14 +427,46 @@ function proxiedUrl(url, proxyUrl) {
   return `${proxyUrl}${separator}url=${encodeURIComponent(url)}`;
 }
 
-async function fetchImage(url, settings) {
-  const response = await fetch(proxiedUrl(url, settings.proxyUrl), {
+async function safeFetch(url, settings, redirectCount = 0) {
+  if (redirectCount > 5) {
+    return null;
+  }
+
+  if (!(await isSafeRemoteUrl(url))) {
+    return null;
+  }
+
+  let requestUrl = url;
+  if (settings.proxyUrl) {
+    const proxyTarget = proxiedUrl(url, settings.proxyUrl);
+    if (!(await isSafeRemoteUrl(proxyTarget))) {
+      return null;
+    }
+    requestUrl = proxyTarget;
+  }
+
+  const response = await fetch(requestUrl, {
     headers: {
       "Accept": "image/png,image/jpeg;q=0.9,*/*;q=0.1",
       "User-Agent": "backtrack-local-capture/0.1"
     },
-    redirect: "follow"
+    redirect: "manual"
   });
+
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    const location = response.headers.get("location");
+    if (!location) {
+      return null;
+    }
+    const nextUrl = new URL(location, url).href;
+    return safeFetch(nextUrl, settings, redirectCount + 1);
+  }
+
+  return response;
+}
+
+async function fetchImage(url, settings) {
+  const response = await safeFetch(url, settings);
   if (!response.ok) {
     return null;
   }
@@ -433,9 +527,16 @@ function writeSnapshot(id, html) {
 
   const cleaned = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
+    .replace(/<embed\b[^>]*>/gi, "")
+    .replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "")
+    .replace(/<base\b[^>]*>/gi, "")
     .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
     .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
-    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "");
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
+    .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']/gi, "")
+    .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*\S*javascript:[^\s>]+/gi, "");
   const filename = `${id}.html`;
   fs.writeFileSync(path.join(CAPTURE_DIR, filename), cleaned);
   return `/captures/${filename}`;
@@ -788,6 +889,22 @@ function contentType(filePath) {
   return "application/octet-stream";
 }
 
+function responseHeadersFor(filePath) {
+  const headers = {
+    "Content-Type": contentType(filePath),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer"
+  };
+
+  if (filePath.startsWith(CAPTURE_DIR) && filePath.endsWith(".html")) {
+    headers["Content-Security-Policy"] =
+      "sandbox; default-src 'none'; img-src 'self' data: http: https:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; object-src 'none'; media-src 'none'; child-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
+    headers["Cross-Origin-Resource-Policy"] = "same-origin";
+  }
+
+  return headers;
+}
+
 function serveFile(res, filePath) {
   fs.readFile(filePath, (error, data) => {
     if (error) {
@@ -795,7 +912,7 @@ function serveFile(res, filePath) {
       res.end("Not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": contentType(filePath) });
+    res.writeHead(200, responseHeadersFor(filePath));
     res.end(data);
   });
 }
