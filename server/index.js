@@ -525,18 +525,23 @@ function writeSnapshot(id, html) {
     return null;
   }
 
-  const cleaned = html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
-    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
-    .replace(/<embed\b[^>]*>/gi, "")
-    .replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "")
-    .replace(/<base\b[^>]*>/gi, "")
-    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
-    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
-    .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']/gi, "")
-    .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*\S*javascript:[^\s>]+/gi, "");
+  let cleaned = html;
+  let previous;
+  do {
+    previous = cleaned;
+    cleaned = cleaned
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
+      .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
+      .replace(/<embed\b[^>]*>/gi, "")
+      .replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "")
+      .replace(/<base\b[^>]*>/gi, "")
+      .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+      .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+      .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
+      .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']/gi, "")
+      .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*\S*javascript:[^\s>]+/gi, "");
+  } while (cleaned !== previous);
   const filename = `${id}.html`;
   fs.writeFileSync(path.join(CAPTURE_DIR, filename), cleaned);
   return `/captures/${filename}`;
