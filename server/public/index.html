@@ -16,39 +16,35 @@
         </form>
       </header>
       <section class="filters">
-        <nav class="tabs">
-          <button type="button" id="recent-tab">Recent</button>
-          <button type="button" id="flagged-tab">Flagged</button>
-        </nav>
-        <label class="filter-toggle">
-          <input type="checkbox" id="images-only">
-          <span>Images captured</span>
-        </label>
+        <div class="filter-row">
+          <nav class="tabs">
+            <button type="button" id="recent-tab">Recent</button>
+            <button type="button" id="flagged-tab">Flagged</button>
+          </nav>
+          <label class="filter-toggle">
+            <input type="checkbox" id="images-only">
+            <span>Images captured</span>
+          </label>
+        </div>
+        <div class="control-row">
+          <div class="picker" id="phrases-picker">
+            <button type="button" id="phrases-toggle" class="picker-toggle" aria-expanded="false">Flagged names and phrases</button>
+            <div id="phrases-panel" class="picker-panel" hidden></div>
+          </div>
+          <div class="picker" id="blocked-sites-picker">
+            <button type="button" id="blocked-sites-toggle" class="picker-toggle" aria-expanded="false">Blocked sites</button>
+            <div id="blocked-sites-panel" class="picker-panel" hidden></div>
+          </div>
+        </div>
       </section>
       <section id="status" class="status">Recent captures</section>
       <section id="results" class="results"></section>
-      <section class="management">
-        <details class="panel phrases-panel">
-          <summary>
-            <span>Flagged names and phrases</span>
-            <span>Matches are collected into this OSINT section as you browse.</span>
-          </summary>
-          <form id="phrases-form">
-            <textarea id="phrases" rows="4" placeholder="Cody Bernardy&#10;Example Company&#10;username123"></textarea>
-            <button type="submit">Save Flags</button>
-          </form>
-        </details>
-        <details class="panel blocked-sites-panel">
-          <summary>
-            <span>Blocked capture sites</span>
-            <span>Pages on these hosts are skipped by the browser add-on.</span>
-          </summary>
-          <form id="blocked-sites-form">
-            <textarea id="blocked-sites" rows="3" placeholder="example.com&#10;social.example.com&#10;example.com/private"></textarea>
-            <button type="submit">Save Blocks</button>
-          </form>
-        </details>
-      </section>
+      <form id="phrases-form" hidden>
+        <textarea id="phrases" rows="4"></textarea>
+      </form>
+      <form id="blocked-sites-form" hidden>
+        <textarea id="blocked-sites" rows="3"></textarea>
+      </form>
     </main>
     <script src="/app.js"></script>
   </body>

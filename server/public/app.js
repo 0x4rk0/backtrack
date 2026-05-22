@@ -7,6 +7,10 @@ const blockedSitesInput = document.querySelector("#blocked-sites");
 const recentTab = document.querySelector("#recent-tab");
 const flaggedTab = document.querySelector("#flagged-tab");
 const imagesOnlyInput = document.querySelector("#images-only");
+const phrasesToggle = document.querySelector("#phrases-toggle");
+const phrasesPanel = document.querySelector("#phrases-panel");
+const blockedSitesToggle = document.querySelector("#blocked-sites-toggle");
+const blockedSitesPanel = document.querySelector("#blocked-sites-panel");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 
@@ -17,6 +21,8 @@ let lastRenderedSignature = "";
 let refreshTimer;
 let flaggedPhrases = [];
 let blockedSites = [];
+let activeFlaggedPhrases = [];
+let activeBlockedSites = [];
 let imagesOnly = false;
 
 function escapeHtml(value) {
@@ -39,10 +45,73 @@ function highlightedText(value, term) {
 }
 
 function filterRows(rows) {
-  if (!imagesOnly) {
-    return rows;
+  return rows.filter((row) => {
+    if (imagesOnly && (!Array.isArray(row.imageFiles) || !row.imageFiles.length)) {
+      return false;
+    }
+
+    if (shouldFilterByPhrase() && !rowMatchesActivePhrase(row)) {
+      return false;
+    }
+
+    if (shouldFilterByBlockedSite() && !rowMatchesActiveBlockedSite(row)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function normalizeValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function shouldFilterByPhrase() {
+  return activeFlaggedPhrases.length > 0 && activeFlaggedPhrases.length < flaggedPhrases.length;
+}
+
+function shouldFilterByBlockedSite() {
+  return activeBlockedSites.length > 0 && activeBlockedSites.length < blockedSites.length;
+}
+
+function rowMatchesActivePhrase(row) {
+  if (!activeFlaggedPhrases.length) {
+    return true;
   }
-  return rows.filter((row) => Array.isArray(row.imageFiles) && row.imageFiles.length);
+
+  const matches = (row.matches || []).map((match) => normalizeValue(match.phrase));
+  return activeFlaggedPhrases.some((phrase) => matches.includes(normalizeValue(phrase)));
+}
+
+function rowMatchesRule(urlValue, rule) {
+  try {
+    const url = new URL(urlValue);
+    const normalizedRule = String(rule || "").trim().toLowerCase();
+    if (!normalizedRule) {
+      return false;
+    }
+
+    const [hostRule, ...pathParts] = normalizedRule.split("/");
+    const pathRule = pathParts.length ? `/${pathParts.join("/")}` : "";
+    const host = url.hostname.toLowerCase();
+    const hostMatches = host === hostRule || host.endsWith(`.${hostRule}`);
+
+    if (!hostMatches) {
+      return false;
+    }
+
+    return pathRule ? url.pathname.toLowerCase().startsWith(pathRule) : true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function rowMatchesActiveBlockedSite(row) {
+  if (!activeBlockedSites.length) {
+    return true;
+  }
+
+  return activeBlockedSites.some((rule) => rowMatchesRule(row.url, rule));
 }
 
 function screenshotBlock(row) {
@@ -133,7 +202,7 @@ function resultCard(row) {
   const title = escapeHtml(row.title || row.url);
   const viewUrl = row.viewFile || (row.id ? `/view/${encodeURIComponent(row.id)}` : row.textFile);
   const snippet = row.snippet
-    ? highlightedText(row.snippet, currentView === "search" ? currentQuery : "")
+    ? highlightedText(row.snippet, currentQuery ? currentQuery : "")
     : "Match found in the title, URL, or flagged phrase list.";
 
   return `
@@ -150,7 +219,7 @@ function resultCard(row) {
         </h2>
         <div class="meta">${escapeHtml(new Date(row.createdAt).toLocaleString())} · ${escapeHtml(row.url)}</div>
         <p class="snippet">${snippet}</p>
-        ${matchList(row, currentView === "search" ? currentQuery : "")}
+        ${matchList(row, currentQuery ? currentQuery : "")}
         ${captureLinks(row)}
       </div>
     </article>
@@ -197,6 +266,70 @@ function renderResults(rows) {
 function updateTabs() {
   recentTab.classList.toggle("active", currentView === "recent");
   flaggedTab.classList.toggle("active", currentView === "flagged");
+}
+
+function updatePickerButton(toggle, activeCount, totalCount, label) {
+  if (!totalCount) {
+    toggle.textContent = `${label} (0)`;
+    return;
+  }
+
+  toggle.textContent = `${label} (${activeCount}/${totalCount})`;
+}
+
+function renderPicker(panel, items, type) {
+  const title = type === "phrase" ? "phrase" : "site";
+  const activeItems = type === "phrase" ? activeFlaggedPhrases : activeBlockedSites;
+  panel.innerHTML = `
+    <div class="picker-list">
+      ${items.length
+        ? items
+            .map(
+              (item, index) => `
+                <label class="picker-item">
+                  <input type="checkbox" data-type="${type}" data-index="${index}" ${activeItems.includes(item) ? "checked" : ""}>
+                  <span>${escapeHtml(item)}</span>
+                </label>
+              `
+            )
+            .join("")
+        : `<p class="picker-empty">No ${title}s saved.</p>`}
+    </div>
+    <form class="picker-add" data-type="${type}">
+      <input type="text" name="value" placeholder="Add ${title}">
+      <button type="submit">Add</button>
+    </form>
+  `;
+}
+
+function closePickers() {
+  phrasesPanel.hidden = true;
+  blockedSitesPanel.hidden = true;
+  phrasesToggle.setAttribute("aria-expanded", "false");
+  blockedSitesToggle.setAttribute("aria-expanded", "false");
+}
+
+function togglePicker(type) {
+  const panel = type === "phrase" ? phrasesPanel : blockedSitesPanel;
+  const toggle = type === "phrase" ? phrasesToggle : blockedSitesToggle;
+  const isOpen = !panel.hidden;
+  closePickers();
+  panel.hidden = isOpen;
+  toggle.setAttribute("aria-expanded", String(!isOpen));
+}
+
+function syncPhrases() {
+  phrasesInput.value = flaggedPhrases.join("\n");
+  activeFlaggedPhrases = activeFlaggedPhrases.filter((phrase) => flaggedPhrases.includes(phrase));
+  renderPicker(phrasesPanel, flaggedPhrases, "phrase");
+  updatePickerButton(phrasesToggle, activeFlaggedPhrases.length, flaggedPhrases.length, "Flagged names and phrases");
+}
+
+function syncBlockedSites() {
+  blockedSitesInput.value = blockedSites.join("\n");
+  activeBlockedSites = activeBlockedSites.filter((site) => blockedSites.includes(site));
+  renderPicker(blockedSitesPanel, blockedSites, "site");
+  updatePickerButton(blockedSitesToggle, activeBlockedSites.length, blockedSites.length, "Blocked sites");
 }
 
 function ensureLinkChoice() {
@@ -251,16 +384,8 @@ function openChoiceTarget(target) {
   closeLinkChoice();
 }
 
-async function loadPhrases() {
-  const response = await fetch("/api/phrases");
-  const payload = await response.json();
-  flaggedPhrases = payload.phrases || [];
-  phrasesInput.value = flaggedPhrases.join("\n");
-}
-
 async function savePhrases() {
-  const phrases = phrasesInput.value
-    .split(/\n|,/)
+  const phrases = flaggedPhrases
     .map((phrase) => phrase.trim())
     .filter(Boolean);
 
@@ -271,20 +396,13 @@ async function savePhrases() {
   });
   const payload = await response.json();
   flaggedPhrases = payload.phrases || [];
-  phrasesInput.value = flaggedPhrases.join("\n");
-  statusEl.textContent = `Saved ${payload.phrases.length} flagged phrase${payload.phrases.length === 1 ? "" : "s"}`;
-}
-
-async function loadBlockedSites() {
-  const response = await fetch("/api/blocked-sites");
-  const payload = await response.json();
-  blockedSites = payload.blockedSites || [];
-  blockedSitesInput.value = blockedSites.join("\n");
+  syncPhrases();
+  statusEl.textContent = `Saved ${flaggedPhrases.length} flagged phrase${flaggedPhrases.length === 1 ? "" : "s"}`;
+  reloadCurrentView();
 }
 
 async function saveBlockedSites() {
-  const nextBlockedSites = blockedSitesInput.value
-    .split(/\n|,/)
+  const nextBlockedSites = blockedSites
     .map((site) => site.trim())
     .filter(Boolean);
 
@@ -295,8 +413,25 @@ async function saveBlockedSites() {
   });
   const payload = await response.json();
   blockedSites = payload.blockedSites || [];
-  blockedSitesInput.value = blockedSites.join("\n");
-  statusEl.textContent = `Saved ${payload.blockedSites.length} blocked site${payload.blockedSites.length === 1 ? "" : "s"}`;
+  syncBlockedSites();
+  statusEl.textContent = `Saved ${blockedSites.length} blocked site${blockedSites.length === 1 ? "" : "s"}`;
+  reloadCurrentView();
+}
+
+async function loadPhrases() {
+  const response = await fetch("/api/phrases");
+  const payload = await response.json();
+  flaggedPhrases = payload.phrases || [];
+  activeFlaggedPhrases = [...flaggedPhrases];
+  syncPhrases();
+}
+
+async function loadBlockedSites() {
+  const response = await fetch("/api/blocked-sites");
+  const payload = await response.json();
+  blockedSites = payload.blockedSites || [];
+  activeBlockedSites = [...blockedSites];
+  syncBlockedSites();
 }
 
 async function loadRecent() {
@@ -387,21 +522,72 @@ form.addEventListener("submit", (event) => {
   }
 });
 
-phrasesForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  savePhrases();
-});
-
-blockedSitesForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  saveBlockedSites();
-});
-
 recentTab.addEventListener("click", loadRecent);
 flaggedTab.addEventListener("click", loadFlagged);
 imagesOnlyInput.addEventListener("change", () => {
   imagesOnly = imagesOnlyInput.checked;
   reloadCurrentView();
+});
+
+phrasesToggle.addEventListener("click", () => togglePicker("phrase"));
+blockedSitesToggle.addEventListener("click", () => togglePicker("site"));
+
+phrasesPanel.addEventListener("change", (event) => {
+  if (!event.target.matches('input[type="checkbox"][data-type="phrase"]')) {
+    return;
+  }
+  const phrase = flaggedPhrases[Number(event.target.dataset.index)];
+  activeFlaggedPhrases = event.target.checked
+    ? [...activeFlaggedPhrases, phrase]
+    : activeFlaggedPhrases.filter((value) => value !== phrase);
+  syncPhrases();
+  reloadCurrentView();
+});
+
+blockedSitesPanel.addEventListener("change", (event) => {
+  if (!event.target.matches('input[type="checkbox"][data-type="site"]')) {
+    return;
+  }
+  const site = blockedSites[Number(event.target.dataset.index)];
+  activeBlockedSites = event.target.checked
+    ? [...activeBlockedSites, site]
+    : activeBlockedSites.filter((value) => value !== site);
+  syncBlockedSites();
+  reloadCurrentView();
+});
+
+phrasesPanel.addEventListener("submit", (event) => {
+  const addForm = event.target.closest('.picker-add[data-type="phrase"]');
+  if (!addForm) {
+    return;
+  }
+  event.preventDefault();
+  const input = addForm.querySelector('input[name="value"]');
+  const value = input.value.trim();
+  if (!value || flaggedPhrases.includes(value)) {
+    return;
+  }
+  flaggedPhrases = [...flaggedPhrases, value];
+  activeFlaggedPhrases = [...activeFlaggedPhrases, value];
+  input.value = "";
+  savePhrases();
+});
+
+blockedSitesPanel.addEventListener("submit", (event) => {
+  const addForm = event.target.closest('.picker-add[data-type="site"]');
+  if (!addForm) {
+    return;
+  }
+  event.preventDefault();
+  const input = addForm.querySelector('input[name="value"]');
+  const value = input.value.trim();
+  if (!value || blockedSites.includes(value)) {
+    return;
+  }
+  blockedSites = [...blockedSites, value];
+  activeBlockedSites = [...activeBlockedSites, value];
+  input.value = "";
+  saveBlockedSites();
 });
 
 resultsEl.addEventListener("click", (event) => {
@@ -414,6 +600,10 @@ resultsEl.addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  if (!event.target.closest(".picker")) {
+    closePickers();
+  }
+
   const actionTarget = event.target.closest("[data-action]");
   const action = actionTarget && actionTarget.dataset.action;
   if (!action || !actionTarget.closest(".link-choice")) {
@@ -429,6 +619,7 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    closePickers();
     closeLinkChoice();
   }
 });
