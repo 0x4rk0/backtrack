@@ -14,7 +14,7 @@ Backtrack is a local browser capture tool. A Firefox or Chrome extension saves p
 1. Clone the repo and enter the project folder:
 
 ```sh
-git clone <repository-url>
+git clone https://github.com/0x4rk0/backtrack.git
 cd backtrack
 ```
 
