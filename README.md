@@ -1,3 +1,4 @@
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/codybernardy)
 # Backtrack
 
 Backtrack is a local browser capture tool. A Firefox or Chrome extension saves page text, screenshots, and related metadata to a local Node.js server so you can review and search what you visited.
