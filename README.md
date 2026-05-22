@@ -53,7 +53,7 @@ about:debugging#/runtime/this-firefox
 ```
 
 2. Click `Load Temporary Add-on`
-3. Select [manifest.json](/Users/codybernardy/Desktop/code/backtrack/extension/dist/firefox/manifest.json)
+3. Select `manifest.json` located in `/extension/dist/firefox/`
 
 ### Chrome or Chromium
 
