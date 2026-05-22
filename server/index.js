@@ -536,9 +536,7 @@ function writeSnapshot(id, html) {
       .replace(/<embed\b[^>]*>/gi, "")
       .replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "")
       .replace(/<base\b[^>]*>/gi, "")
-      .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
-      .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
-      .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
+      .replace(/(\s)on([a-z]+\s*=)/gi, "$1data-on$2")
       .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']/gi, "")
       .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*\S*javascript:[^\s>]+/gi, "");
   } while (cleaned !== previous);
