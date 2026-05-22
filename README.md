@@ -3,6 +3,13 @@
 
 Backtrack is a local browser capture tool. A Firefox or Chrome extension saves page text, screenshots, and related metadata to a local Node.js server so you can review and search what you visited.
 
+<img width="1440" height="780" alt="Screenshot 2026-05-21 at 22 11 47" src="https://github.com/user-attachments/assets/de1c1130-49dc-451c-b9f6-b3de668bd49f" />
+
+<img width="1245" height="674" alt="Screenshot 2026-05-21 at 22 25 11" src="https://github.com/user-attachments/assets/65829468-8d99-4f51-95e1-70d61ced6788" />
+
+<img width="1434" height="786" alt="Screenshot 2026-05-21 at 22 12 07" src="https://github.com/user-attachments/assets/c7437d6a-6fa2-417b-b26c-f5a2a91c0444" />
+
+
 ## Requirements
 
 - Node.js 18 or newer
