@@ -6,16 +6,18 @@ const blockedSitesForm = document.querySelector("#blocked-sites-form");
 const blockedSitesInput = document.querySelector("#blocked-sites");
 const recentTab = document.querySelector("#recent-tab");
 const flaggedTab = document.querySelector("#flagged-tab");
-const menuToggle = document.querySelector("#menu-toggle");
-const menuPanel = document.querySelector("#menu-panel");
-const sortMode = document.querySelector("#sort-mode");
-const clearFindings = document.querySelector("#clear-findings");
+const imagesOnlyInput = document.querySelector("#images-only");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
+
+let linkChoiceEl;
 let currentView = "recent";
 let currentQuery = "";
 let lastRenderedSignature = "";
 let refreshTimer;
+let flaggedPhrases = [];
+let blockedSites = [];
+let imagesOnly = false;
 
 function escapeHtml(value) {
   return String(value)
@@ -34,6 +36,13 @@ function highlightedText(value, term) {
 
   const safeTerm = escapeHtml(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return escaped.replace(new RegExp(`(${safeTerm})`, "ig"), "<mark>$1</mark>");
+}
+
+function filterRows(rows) {
+  if (!imagesOnly) {
+    return rows;
+  }
+  return rows.filter((row) => Array.isArray(row.imageFiles) && row.imageFiles.length);
 }
 
 function screenshotBlock(row) {
@@ -87,14 +96,16 @@ function matchList(row, query) {
 function captureLinks(row) {
   const readerUrl = row.readerFile || (row.id ? `/reader/${encodeURIComponent(row.id)}` : row.textFile);
   const viewUrl = row.viewFile || (row.id ? `/view/${encodeURIComponent(row.id)}` : "");
-  const links = [
-    `<a href="${escapeHtml(readerUrl)}" target="_blank" rel="noreferrer">Read captured text</a>`
-  ];
+  const links = [`<a href="${escapeHtml(readerUrl)}" target="_blank" rel="noreferrer">Read captured text</a>`];
 
   if (viewUrl) {
     links.push(`<a href="${escapeHtml(viewUrl)}" target="_blank" rel="noreferrer">View capture</a>`);
   } else if (row.htmlFile) {
     links.push(`<a href="${escapeHtml(row.htmlFile)}" target="_blank" rel="noreferrer">Static HTML snapshot</a>`);
+  }
+
+  if (Array.isArray(row.imageFiles) && row.imageFiles.length) {
+    links.push(`<a href="${escapeHtml(viewUrl)}" target="_blank" rel="noreferrer">${row.imageFiles.length} saved image${row.imageFiles.length === 1 ? "" : "s"}</a>`);
   }
 
   links.push(`<a href="${escapeHtml(row.textFile)}" target="_blank" rel="noreferrer">Raw text</a>`);
@@ -120,14 +131,23 @@ function baseLabel(base) {
 
 function resultCard(row) {
   const title = escapeHtml(row.title || row.url);
+  const viewUrl = row.viewFile || (row.id ? `/view/${encodeURIComponent(row.id)}` : row.textFile);
   const snippet = row.snippet
     ? highlightedText(row.snippet, currentView === "search" ? currentQuery : "")
     : "Match found in the title, URL, or flagged phrase list.";
+
   return `
     <article class="result">
       ${screenshotBlock(row)}
-      <div>
-        <h2><a href="${escapeHtml(row.url)}" target="_blank" rel="noreferrer">${title}</a></h2>
+      <div class="result-body">
+        <h2>
+          <button
+            type="button"
+            class="title-link"
+            data-external-url="${escapeHtml(row.url)}"
+            data-local-url="${escapeHtml(viewUrl)}"
+          >${title}</button>
+        </h2>
         <div class="meta">${escapeHtml(new Date(row.createdAt).toLocaleString())} · ${escapeHtml(row.url)}</div>
         <p class="snippet">${snippet}</p>
         ${matchList(row, currentView === "search" ? currentQuery : "")}
@@ -138,9 +158,11 @@ function resultCard(row) {
 }
 
 function renderResults(rows) {
+  const filteredRows = filterRows(rows);
   lastRenderedSignature = rows.map((row) => `${row.id}:${row.createdAt}`).join("|");
   const groups = new Map();
-  for (const row of rows) {
+
+  for (const row of filteredRows) {
     const base = baseUrl(row);
     if (!groups.has(base)) {
       groups.set(base, []);
@@ -149,27 +171,91 @@ function renderResults(rows) {
   }
 
   resultsEl.innerHTML = [...groups.entries()]
-    .map(([base, groupRows], index) => `
-      <section class="source-group">
-        <header class="source-header">
-          <div>
-            <h2>${escapeHtml(baseLabel(base))}</h2>
-            <a href="${escapeHtml(base)}" target="_blank" rel="noreferrer">${escapeHtml(base)}</a>
+    .map(
+      ([base, groupRows]) => `
+        <section class="source-group">
+          <header class="source-header">
+            <div>
+              <h2>${escapeHtml(baseLabel(base))}</h2>
+              <a href="${escapeHtml(base)}" target="_blank" rel="noreferrer">${escapeHtml(base)}</a>
+            </div>
+            <span>${groupRows.length} capture${groupRows.length === 1 ? "" : "s"}</span>
+          </header>
+          <div class="source-results">
+            ${groupRows.map(resultCard).join("")}
           </div>
-          <span>${groupRows.length} capture${groupRows.length === 1 ? "" : "s"}</span>
-        </header>
-        <div class="source-results">
-          ${groupRows.map(resultCard).join("")}
-        </div>
-      </section>
-    `)
+        </section>
+      `
+    )
     .join("");
+
+  if (!filteredRows.length) {
+    resultsEl.innerHTML = `<section class="empty-state">No captures match this view.</section>`;
+  }
+}
+
+function updateTabs() {
+  recentTab.classList.toggle("active", currentView === "recent");
+  flaggedTab.classList.toggle("active", currentView === "flagged");
+}
+
+function ensureLinkChoice() {
+  if (linkChoiceEl) {
+    return linkChoiceEl;
+  }
+
+  linkChoiceEl = document.createElement("div");
+  linkChoiceEl.className = "link-choice";
+  linkChoiceEl.hidden = true;
+  linkChoiceEl.innerHTML = `
+    <div class="link-choice-backdrop" data-action="close"></div>
+    <section class="link-choice-panel" role="dialog" aria-modal="true" aria-labelledby="link-choice-title">
+      <h2 id="link-choice-title">Open external page?</h2>
+      <p>This title points to a page outside backtrack.</p>
+      <p class="link-choice-url"></p>
+      <div class="link-choice-actions">
+        <button type="button" data-action="local">Open local capture</button>
+        <button type="button" data-action="external" class="danger-button">Go to external page</button>
+        <button type="button" data-action="close" class="secondary-button">Cancel</button>
+      </div>
+    </section>
+  `;
+  document.body.appendChild(linkChoiceEl);
+  return linkChoiceEl;
+}
+
+function openLinkChoice(externalUrl, localUrl) {
+  const dialog = ensureLinkChoice();
+  dialog.querySelector(".link-choice-url").textContent = externalUrl;
+  dialog.dataset.externalUrl = externalUrl;
+  dialog.dataset.localUrl = localUrl;
+  dialog.hidden = false;
+  dialog.querySelector('[data-action="local"]').focus();
+}
+
+function closeLinkChoice() {
+  if (linkChoiceEl) {
+    linkChoiceEl.hidden = true;
+  }
+}
+
+function openChoiceTarget(target) {
+  if (!linkChoiceEl) {
+    return;
+  }
+
+  const url = target === "external" ? linkChoiceEl.dataset.externalUrl : linkChoiceEl.dataset.localUrl;
+  if (url) {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+  closeLinkChoice();
 }
 
 async function loadPhrases() {
   const response = await fetch("/api/phrases");
   const payload = await response.json();
-  phrasesInput.value = (payload.phrases || []).join("\n");
+  flaggedPhrases = payload.phrases || [];
+  phrasesInput.value = flaggedPhrases.join("\n");
 }
 
 async function savePhrases() {
@@ -184,18 +270,20 @@ async function savePhrases() {
     body: JSON.stringify({ phrases })
   });
   const payload = await response.json();
-  phrasesInput.value = (payload.phrases || []).join("\n");
+  flaggedPhrases = payload.phrases || [];
+  phrasesInput.value = flaggedPhrases.join("\n");
   statusEl.textContent = `Saved ${payload.phrases.length} flagged phrase${payload.phrases.length === 1 ? "" : "s"}`;
 }
 
 async function loadBlockedSites() {
   const response = await fetch("/api/blocked-sites");
   const payload = await response.json();
-  blockedSitesInput.value = (payload.blockedSites || []).join("\n");
+  blockedSites = payload.blockedSites || [];
+  blockedSitesInput.value = blockedSites.join("\n");
 }
 
 async function saveBlockedSites() {
-  const blockedSites = blockedSitesInput.value
+  const nextBlockedSites = blockedSitesInput.value
     .split(/\n|,/)
     .map((site) => site.trim())
     .filter(Boolean);
@@ -203,40 +291,43 @@ async function saveBlockedSites() {
   const response = await fetch("/api/blocked-sites", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ blockedSites })
+    body: JSON.stringify({ blockedSites: nextBlockedSites })
   });
   const payload = await response.json();
-  blockedSitesInput.value = (payload.blockedSites || []).join("\n");
+  blockedSites = payload.blockedSites || [];
+  blockedSitesInput.value = blockedSites.join("\n");
   statusEl.textContent = `Saved ${payload.blockedSites.length} blocked site${payload.blockedSites.length === 1 ? "" : "s"}`;
 }
 
 async function loadRecent() {
   currentView = "recent";
   currentQuery = "";
-  const response = await fetch(`/api/recent?sort=${encodeURIComponent(sortMode.value)}`);
+  updateTabs();
+  const response = await fetch("/api/recent");
   const payload = await response.json();
-  statusEl.textContent = `Recent captures (${payload.results.length})`;
-  renderResults(payload.results);
+  const filteredRows = filterRows(payload.results || []);
+  statusEl.textContent = `Recent captures (${filteredRows.length})`;
+  renderResults(payload.results || []);
 }
 
 async function loadFlagged() {
   currentView = "flagged";
   currentQuery = "";
-  const response = await fetch(`/api/flagged?sort=${encodeURIComponent(sortMode.value)}`);
+  updateTabs();
+  const response = await fetch("/api/flagged");
   const payload = await response.json();
-  statusEl.textContent = `Flagged captures (${payload.results.length})`;
-  renderResults(payload.results);
+  const filteredRows = filterRows(payload.results || []);
+  statusEl.textContent = `Flagged captures (${filteredRows.length})`;
+  renderResults(payload.results || []);
 }
 
 async function search(query) {
-  currentView = "search";
   currentQuery = query;
-  const response = await fetch(
-    `/api/search?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sortMode.value)}`
-  );
+  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
   const payload = await response.json();
-  statusEl.textContent = `${payload.results.length} result${payload.results.length === 1 ? "" : "s"} for "${query}"`;
-  renderResults(payload.results);
+  const filteredRows = filterRows(payload.results || []);
+  statusEl.textContent = `${filteredRows.length} result${filteredRows.length === 1 ? "" : "s"} for "${query}"`;
+  renderResults(payload.results || []);
 }
 
 async function refreshIfChanged() {
@@ -244,10 +335,10 @@ async function refreshIfChanged() {
     return;
   }
 
-  const response = await fetch(`/api/recent?sort=${encodeURIComponent(sortMode.value)}`);
+  const response = await fetch("/api/recent");
   const payload = await response.json();
   const signature = (payload.results || []).map((row) => `${row.id}:${row.createdAt}`).join("|");
-  if (signature !== lastRenderedSignature && currentView !== "search") {
+  if (signature !== lastRenderedSignature && currentQuery === "") {
     reloadCurrentView();
   }
 }
@@ -277,10 +368,10 @@ function connectCaptureEvents() {
 }
 
 function reloadCurrentView() {
-  if (currentView === "flagged") {
-    loadFlagged();
-  } else if (currentView === "search" && currentQuery) {
+  if (currentQuery) {
     search(currentQuery);
+  } else if (currentView === "flagged") {
+    loadFlagged();
   } else {
     loadRecent();
   }
@@ -292,7 +383,7 @@ form.addEventListener("submit", (event) => {
   if (query) {
     search(query);
   } else {
-    loadRecent();
+    reloadCurrentView();
   }
 });
 
@@ -308,25 +399,38 @@ blockedSitesForm.addEventListener("submit", (event) => {
 
 recentTab.addEventListener("click", loadRecent);
 flaggedTab.addEventListener("click", loadFlagged);
-menuToggle.addEventListener("click", () => {
-  const isOpen = !menuPanel.hidden;
-  menuPanel.hidden = isOpen;
-  menuToggle.setAttribute("aria-expanded", String(!isOpen));
+imagesOnlyInput.addEventListener("change", () => {
+  imagesOnly = imagesOnlyInput.checked;
+  reloadCurrentView();
 });
 
-sortMode.addEventListener("change", reloadCurrentView);
-
-clearFindings.addEventListener("click", async () => {
-  const confirmed = window.confirm(
-    "Clear all captured findings, text files, and screenshots? Flagged phrase settings will remain."
-  );
-  if (!confirmed) {
+resultsEl.addEventListener("click", (event) => {
+  const button = event.target.closest(".title-link");
+  if (!button) {
     return;
   }
 
-  await fetch("/api/clear", { method: "POST" });
-  statusEl.textContent = "Cleared captured findings";
-  renderResults([]);
+  openLinkChoice(button.dataset.externalUrl, button.dataset.localUrl);
+});
+
+document.addEventListener("click", (event) => {
+  const actionTarget = event.target.closest("[data-action]");
+  const action = actionTarget && actionTarget.dataset.action;
+  if (!action || !actionTarget.closest(".link-choice")) {
+    return;
+  }
+
+  if (action === "external" || action === "local") {
+    openChoiceTarget(action);
+  } else if (action === "close") {
+    closeLinkChoice();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeLinkChoice();
+  }
 });
 
 loadPhrases();

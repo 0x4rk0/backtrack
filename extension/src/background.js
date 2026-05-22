@@ -2,12 +2,14 @@ const SERVER_ORIGIN = "http://127.0.0.1:4317";
 const CAPTURES_URL = `${SERVER_ORIGIN}/api/captures`;
 const PHRASES_URL = `${SERVER_ORIGIN}/api/phrases`;
 const BLOCKED_SITES_URL = `${SERVER_ORIGIN}/api/blocked-sites`;
+const SETTINGS_URL = `${SERVER_ORIGIN}/api/settings`;
 const DEBUG_MODE = "__BACKTRACK_DEBUG__";
 const DEBUG_ENABLED = DEBUG_MODE === "1" || DEBUG_MODE === "true" || DEBUG_MODE === "full";
 const DEBUG_FULL = DEBUG_MODE === "full";
 const captureCache = new Map();
 let phraseCache = { phrases: [], loadedAt: 0 };
 let blockedSiteCache = { blockedSites: [], loadedAt: 0 };
+let settingsCache = { settings: { captureDelayMs: 900 }, loadedAt: 0 };
 
 function debugPayload(label, payload) {
   if (!DEBUG_ENABLED) {
@@ -64,6 +66,22 @@ async function blockedSites() {
   }
 
   return blockedSiteCache.blockedSites;
+}
+
+async function settings() {
+  if (Date.now() - settingsCache.loadedAt < 30_000) {
+    return settingsCache.settings;
+  }
+
+  try {
+    const response = await fetch(SETTINGS_URL);
+    const payload = await response.json();
+    settingsCache = { settings: payload.settings || settingsCache.settings, loadedAt: Date.now() };
+  } catch (error) {
+    settingsCache = { settings: settingsCache.settings, loadedAt: Date.now() };
+  }
+
+  return settingsCache.settings;
 }
 
 function hostnameFor(url) {
@@ -161,6 +179,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message && message.type === "BACKTRACK_GET_BLOCKED_SITES") {
     blockedSites().then((items) => sendResponse({ blockedSites: items }));
+    return true;
+  }
+
+  if (message && message.type === "BACKTRACK_GET_SETTINGS") {
+    settings().then((items) => sendResponse({ settings: items }));
     return true;
   }
 

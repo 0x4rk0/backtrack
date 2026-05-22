@@ -6,24 +6,31 @@
   const PAUSE_KEY = "backtrackPaused";
   let flaggedPhrases = [];
   let blockedSites = [];
+  let settings = { captureDelayMs: 900 };
   let lastMatchCount = 0;
   let captureInFlight = false;
   let statusEl;
   let menuEl;
+  let widgetPosition = null;
+  let dragState = null;
+  let lastDragEndedAt = 0;
 
   function injectStyles() {
     const style = document.createElement("style");
     style.textContent = `
       .${MARK_CLASS} {
-        background: rgba(255, 214, 64, 0.72) !important;
-        color: inherit !important;
-        box-shadow: 0 0 0 1px rgba(128, 89, 0, 0.35);
-        border-radius: 2px;
+        background: #fff3a3 !important;
+        color: #111827 !important;
+        box-shadow:
+          0 0 0 2px rgba(10, 26, 42, 0.9),
+          0 2px 5px rgba(0, 0, 0, 0.22) !important;
+        border-radius: 3px;
+        outline: 1px solid rgba(255, 255, 255, 0.9) !important;
       }
       #backtrack-widget {
         position: fixed;
-        right: 18px;
-        bottom: 18px;
+        left: auto;
+        top: auto;
         z-index: 2147483647;
         display: flex;
         align-items: center;
@@ -36,7 +43,13 @@
         color: #18202a;
         box-shadow: 0 8px 22px rgba(24, 32, 42, 0.22);
         font: 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #backtrack-widget.dragging {
+        cursor: grabbing;
       }
       #backtrack-widget:hover {
         border-color: rgba(8, 79, 95, 0.8);
@@ -62,8 +75,8 @@
       }
       #backtrack-menu {
         position: fixed;
-        right: 18px;
-        bottom: 62px;
+        left: auto;
+        top: auto;
         z-index: 2147483647;
         display: grid;
         gap: 6px;
@@ -103,6 +116,7 @@
     statusEl.title = "backtrack is running. Open controls.";
     statusEl.setAttribute("aria-expanded", "false");
     statusEl.innerHTML = `<span id="backtrack-widget-dot"></span><span id="backtrack-widget-label">backtrack running</span><span id="backtrack-widget-caret">▾</span>`;
+    statusEl.addEventListener("pointerdown", beginDrag);
     statusEl.addEventListener("click", toggleMenu);
     document.documentElement.appendChild(statusEl);
 
@@ -115,7 +129,105 @@
     `;
     menuEl.addEventListener("click", handleMenuClick);
     document.documentElement.appendChild(menuEl);
+    applyWidgetPosition();
     updatePauseUi();
+  }
+
+  function applyWidgetPosition() {
+    if (!statusEl || !menuEl) {
+      return;
+    }
+
+    const margin = 18;
+    const width = statusEl.offsetWidth || 160;
+    const height = statusEl.offsetHeight || 36;
+    const left = widgetPosition ? widgetPosition.left : Math.max(margin, window.innerWidth - width - margin);
+    const top = widgetPosition ? widgetPosition.top : Math.max(margin, window.innerHeight - height - margin);
+    const clampedLeft = Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin));
+    const clampedTop = Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin));
+    widgetPosition = { left: clampedLeft, top: clampedTop };
+
+    statusEl.style.left = `${clampedLeft}px`;
+    statusEl.style.top = `${clampedTop}px`;
+    statusEl.style.right = "auto";
+    statusEl.style.bottom = "auto";
+
+    const menuWidth = menuEl.offsetWidth || 190;
+    const menuHeight = menuEl.offsetHeight || 90;
+    const menuLeft = Math.min(
+      Math.max(margin, clampedLeft + width - menuWidth),
+      Math.max(margin, window.innerWidth - menuWidth - margin)
+    );
+    let menuTop = clampedTop - menuHeight - 8;
+    if (menuTop < margin) {
+      menuTop = Math.min(window.innerHeight - menuHeight - margin, clampedTop + height + 8);
+    }
+
+    menuEl.style.left = `${menuLeft}px`;
+    menuEl.style.top = `${Math.max(margin, menuTop)}px`;
+    menuEl.style.right = "auto";
+    menuEl.style.bottom = "auto";
+  }
+
+  function beginDrag(event) {
+    if (!statusEl) {
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    dragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: widgetPosition ? widgetPosition.left : statusEl.getBoundingClientRect().left,
+      originTop: widgetPosition ? widgetPosition.top : statusEl.getBoundingClientRect().top,
+      moved: false
+    };
+    statusEl.classList.add("dragging");
+    statusEl.setPointerCapture(event.pointerId);
+    statusEl.addEventListener("pointermove", dragWidget);
+    statusEl.addEventListener("pointerup", endDrag);
+    statusEl.addEventListener("pointercancel", endDrag);
+  }
+
+  function dragWidget(event) {
+    if (!dragState || event.pointerId !== dragState.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const deltaX = event.clientX - dragState.startX;
+    const deltaY = event.clientY - dragState.startY;
+    if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+      dragState.moved = true;
+    }
+
+    widgetPosition = {
+      left: dragState.originLeft + deltaX,
+      top: dragState.originTop + deltaY
+    };
+    applyWidgetPosition();
+  }
+
+  function endDrag(event) {
+    if (!statusEl || !dragState || event.pointerId !== dragState.pointerId) {
+      return;
+    }
+
+    statusEl.releasePointerCapture(event.pointerId);
+    statusEl.classList.remove("dragging");
+    statusEl.removeEventListener("pointermove", dragWidget);
+    statusEl.removeEventListener("pointerup", endDrag);
+    statusEl.removeEventListener("pointercancel", endDrag);
+
+    if (dragState.moved) {
+      lastDragEndedAt = Date.now();
+    }
+
+    dragState = null;
   }
 
   function setStatus(text) {
@@ -152,6 +264,10 @@
     if (!menuEl || !statusEl) {
       return;
     }
+    if (Date.now() - lastDragEndedAt < 250) {
+      return;
+    }
+    applyWidgetPosition();
     menuEl.hidden = !menuEl.hidden;
     statusEl.setAttribute("aria-expanded", String(!menuEl.hidden));
   }
@@ -163,7 +279,7 @@
     }
 
     if (button.dataset.action === "save") {
-      menuEl.hidden = true;
+    menuEl.hidden = true;
       statusEl.setAttribute("aria-expanded", "false");
       sendCapture("manual");
     } else if (button.dataset.action === "pause") {
@@ -175,6 +291,8 @@
       }
     }
   }
+
+  window.addEventListener("resize", applyWidgetPosition);
 
   function visibleText() {
     const clone = document.body ? document.body.cloneNode(true) : null;
@@ -415,6 +533,14 @@
     });
   }
 
+  function requestSettings() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "BACKTRACK_GET_SETTINGS" }, (response) => {
+        resolve((response && response.settings) || { captureDelayMs: 900 });
+      });
+    });
+  }
+
   async function sendCapture(source) {
     if (captureInFlight) {
       return;
@@ -479,7 +605,11 @@
   async function initialize() {
     injectStyles();
     createWidget();
-    [flaggedPhrases, blockedSites] = await Promise.all([requestPhrases(), requestBlockedSites()]);
+    [flaggedPhrases, blockedSites, settings] = await Promise.all([
+      requestPhrases(),
+      requestBlockedSites(),
+      requestSettings()
+    ]);
     if (isBlockedUrl(location.href)) {
       setStatus("backtrack blocked here");
       return;
@@ -489,7 +619,7 @@
     if (!isPaused()) {
       setStatus(lastMatchCount ? `backtrack · ${lastMatchCount} marked` : "backtrack running");
     }
-    setTimeout(() => sendCapture("automatic"), 900);
+    setTimeout(() => sendCapture("automatic"), Number(settings.captureDelayMs) || 900);
   }
 
   if (document.readyState === "complete") {

@@ -13,7 +13,16 @@ const CAPTURE_DIR = path.join(DATA_DIR, "captures");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const PHRASES_FILE = path.join(DATA_DIR, "phrases.json");
 const BLOCKED_SITES_FILE = path.join(DATA_DIR, "blocked-sites.json");
+const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const PUBLIC_DIR = path.join(ROOT, "server", "public");
+const DEFAULT_SETTINGS = {
+  saveImages: true,
+  maxImagesPerCapture: 24,
+  captureDelayMs: 900,
+  proxyUrl: "",
+  density: "comfortable",
+  accentColor: "#0b6f85"
+};
 
 const JSON_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -33,6 +42,9 @@ function ensureStore() {
   }
   if (!fs.existsSync(BLOCKED_SITES_FILE)) {
     fs.writeFileSync(BLOCKED_SITES_FILE, "[]\n");
+  }
+  if (!fs.existsSync(SETTINGS_FILE)) {
+    fs.writeFileSync(SETTINGS_FILE, `${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`);
   }
 }
 
@@ -72,6 +84,32 @@ function writeBlockedSites(sites) {
   ];
   fs.writeFileSync(BLOCKED_SITES_FILE, `${JSON.stringify(cleaned, null, 2)}\n`);
   return cleaned;
+}
+
+function readSettings() {
+  ensureStore();
+  try {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")) };
+  } catch (error) {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function writeSettings(settings) {
+  const current = readSettings();
+  const next = {
+    ...current,
+    saveImages: Boolean(settings.saveImages),
+    maxImagesPerCapture: Math.max(0, Math.min(Number(settings.maxImagesPerCapture) || 0, 100)),
+    captureDelayMs: Math.max(250, Math.min(Number(settings.captureDelayMs) || DEFAULT_SETTINGS.captureDelayMs, 10000)),
+    proxyUrl: String(settings.proxyUrl || "").trim(),
+    density: ["compact", "comfortable", "spacious"].includes(settings.density) ? settings.density : "comfortable",
+    accentColor: /^#[0-9a-f]{6}$/i.test(String(settings.accentColor || ""))
+      ? String(settings.accentColor)
+      : DEFAULT_SETTINGS.accentColor
+  };
+  fs.writeFileSync(SETTINGS_FILE, `${JSON.stringify(next, null, 2)}\n`);
+  return next;
 }
 
 function domainFor(row) {
@@ -256,6 +294,114 @@ function writeScreenshot(id, screenshot) {
   return `/captures/${filename}`;
 }
 
+function resolveImageUrl(value, pageUrl) {
+  try {
+    const parsed = new URL(value, pageUrl);
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return "";
+    }
+    if (!/\.(png|jpe?g)([?#].*)?$/i.test(parsed.href)) {
+      return "";
+    }
+    return parsed.href;
+  } catch (error) {
+    return "";
+  }
+}
+
+function extractImageUrls(html, pageUrl) {
+  if (!html || typeof html !== "string") {
+    return [];
+  }
+
+  const urls = [];
+  const attrPattern = /\s(?:src|href)=["']([^"']+)["']/gi;
+  const srcsetPattern = /\ssrcset=["']([^"']+)["']/gi;
+  let match;
+  while ((match = attrPattern.exec(html))) {
+    urls.push(resolveImageUrl(match[1], pageUrl));
+  }
+  while ((match = srcsetPattern.exec(html))) {
+    for (const candidate of match[1].split(",")) {
+      urls.push(resolveImageUrl(candidate.trim().split(/\s+/)[0], pageUrl));
+    }
+  }
+
+  return [...new Set(urls.filter(Boolean))];
+}
+
+function proxiedUrl(url, proxyUrl) {
+  if (!proxyUrl) {
+    return url;
+  }
+  if (proxyUrl.includes("{url}")) {
+    return proxyUrl.replace("{url}", encodeURIComponent(url));
+  }
+  const separator = proxyUrl.includes("?") ? "&" : "?";
+  return `${proxyUrl}${separator}url=${encodeURIComponent(url)}`;
+}
+
+async function fetchImage(url, settings) {
+  const response = await fetch(proxiedUrl(url, settings.proxyUrl), {
+    headers: {
+      "Accept": "image/png,image/jpeg;q=0.9,*/*;q=0.1",
+      "User-Agent": "backtrack-local-capture/0.1"
+    },
+    redirect: "follow"
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const type = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  if (!["image/png", "image/jpeg"].includes(type)) {
+    return null;
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length || buffer.length > 10 * 1024 * 1024) {
+    return null;
+  }
+
+  return {
+    buffer,
+    ext: type === "image/png" ? "png" : "jpg",
+    type
+  };
+}
+
+async function writePageImages(id, pageUrl, html, settings) {
+  if (!settings.saveImages || !settings.maxImagesPerCapture) {
+    return [];
+  }
+
+  const imageUrls = extractImageUrls(html, pageUrl).slice(0, settings.maxImagesPerCapture);
+  const saved = [];
+  const imageDir = path.join(CAPTURE_DIR, `${id}-images`);
+  for (const imageUrl of imageUrls) {
+    try {
+      const image = await fetchImage(imageUrl, settings);
+      if (!image) {
+        continue;
+      }
+      const filename = `${crypto.createHash("sha1").update(imageUrl).digest("hex").slice(0, 16)}.${image.ext}`;
+      fs.mkdirSync(imageDir, { recursive: true });
+      fs.writeFileSync(path.join(imageDir, filename), image.buffer);
+      saved.push({
+        sourceUrl: imageUrl,
+        file: `/captures/${id}-images/${filename}`,
+        type: image.type,
+        bytes: image.buffer.length
+      });
+    } catch (error) {
+      if (DEBUG_ENABLED) {
+        console.log(`[backtrack] image fetch failed: ${imageUrl} (${error.message})`);
+      }
+    }
+  }
+  return saved;
+}
+
 function writeSnapshot(id, html) {
   if (!html || typeof html !== "string") {
     return null;
@@ -320,6 +466,7 @@ function readerHtml(row, text) {
 }
 
 function captureViewHtml(row) {
+  const images = Array.isArray(row.imageFiles) ? row.imageFiles : [];
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -340,6 +487,8 @@ function captureViewHtml(row) {
       h2 { margin: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 15px; }
       img { display: block; width: 100%; height: auto; background: #eef1f4; }
       iframe { display: block; width: 100%; height: 78vh; border: 0; background: #fff; }
+      .images { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; padding: 12px; }
+      .images img { aspect-ratio: 1 / 1; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; }
       .empty { padding: 18px; color: var(--muted); }
       @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } iframe { height: 70vh; } }
     </style>
@@ -365,6 +514,10 @@ function captureViewHtml(row) {
           ${row.htmlFile ? `<iframe src="${escapeHtml(row.htmlFile)}" sandbox=""></iframe>` : `<div class="empty">No HTML snapshot was captured.</div>`}
         </section>
       </div>
+      <section style="margin-top:16px;">
+        <h2>Saved page images</h2>
+        ${images.length ? `<div class="images">${images.map((image) => `<a href="${escapeHtml(image.file)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(image.file)}" alt=""></a>`).join("")}</div>` : `<div class="empty">No JPG or PNG page images were saved.</div>`}
+      </section>
     </main>
   </body>
 </html>`;
@@ -453,6 +606,7 @@ async function handleCreateCapture(req, res) {
 
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
+    const settings = readSettings();
     const textPath = path.join(CAPTURE_DIR, `${id}.txt`);
     fs.writeFileSync(textPath, `${text}\n`);
 
@@ -466,6 +620,7 @@ async function handleCreateCapture(req, res) {
       viewFile: `/view/${id}`,
       htmlFile: writeSnapshot(id, payload.html),
       screenshotFile: writeScreenshot(id, payload.screenshot),
+      imageFiles: await writePageImages(id, url, payload.html, settings),
       screenshotMeta: payload.screenshotMeta || null,
       textLength: text.length,
       matches: cleanMatches(payload.matches)
@@ -512,6 +667,20 @@ function handleBlockedSites(req, res) {
     .then((body) => {
       const payload = JSON.parse(body);
       sendJson(res, 200, { blockedSites: writeBlockedSites(payload.blockedSites || []) });
+    })
+    .catch((error) => sendJson(res, 400, { error: error.message }));
+}
+
+function handleSettings(req, res) {
+  if (req.method === "GET") {
+    sendJson(res, 200, { settings: readSettings() });
+    return;
+  }
+
+  readBody(req)
+    .then((body) => {
+      const payload = JSON.parse(body);
+      sendJson(res, 200, { settings: writeSettings(payload.settings || {}) });
     })
     .catch((error) => sendJson(res, 400, { error: error.message }));
 }
@@ -663,6 +832,8 @@ http
       handlePhrases(req, res);
     } else if ((req.method === "GET" || req.method === "POST") && url.pathname === "/api/blocked-sites") {
       handleBlockedSites(req, res);
+    } else if ((req.method === "GET" || req.method === "POST") && url.pathname === "/api/settings") {
+      handleSettings(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/flagged") {
       handleFlagged(req, res);
     } else {

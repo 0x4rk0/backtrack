@@ -21,7 +21,7 @@ npm --version
 Clone the repository:
 
 ```sh
-git clone <repository-url>
+git clone https://github.com/0x4rk0/backtrack.git
 cd backtrack
 ```
 
@@ -75,14 +75,6 @@ http://127.0.0.1:4317
 
 Keep this terminal window open while using the browser add-on.
 
-To use a different port:
-
-```sh
-BACKTRACK_PORT=5000 npm start
-```
-
-If you change the port, also update `SERVER_URL` in `extension/src/background.js` and rebuild the extensions.
-
 ## Normal Browser Add-on Install
 
 Chrome and Firefox stable releases require add-ons to be signed for normal install. The generated release packages are the artifacts to submit for signing:
@@ -127,6 +119,7 @@ Search results include:
 - Matching text snippet
 - Formatted reader view for captured text
 - Capture view with screenshot and static local page snapshot, when available
+- Locally saved JPG/PNG page images, when enabled and fetchable
 - Raw captured text
 - Screenshot of the visible tab, when browser permissions allow it
 
@@ -184,9 +177,11 @@ Important files:
 - `data/backtrack/index.json` stores capture metadata.
 - `data/backtrack/phrases.json` stores flagged names and phrases.
 - `data/backtrack/blocked-sites.json` stores sites skipped by capture.
+- `data/backtrack/settings.json` stores product settings.
 - `data/backtrack/captures/*.txt` stores extracted webpage text.
 - `data/backtrack/captures/*.html` stores static local page snapshots.
 - `data/backtrack/captures/*.png` stores screenshots.
+- `data/backtrack/captures/*-images/` stores downloaded JPG/PNG page images.
 
 This directory may contain sensitive browsing data. Do not commit it or share it casually.
 
