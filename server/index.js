@@ -542,8 +542,9 @@ function writeSnapshot(id, html) {
       .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']/gi, "")
       .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*\S*javascript:[^\s>]+/gi, "");
   } while (cleaned !== previous);
+  const safeSnapshot = cleaned.replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const filename = `${id}.html`;
-  fs.writeFileSync(path.join(CAPTURE_DIR, filename), cleaned);
+  fs.writeFileSync(path.join(CAPTURE_DIR, filename), safeSnapshot);
   return `/captures/${filename}`;
 }
 
