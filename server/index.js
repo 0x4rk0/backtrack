@@ -68,9 +68,32 @@ function writePhrases(phrases) {
   return cleaned;
 }
 
+function isAutomaticBlockedSite(site) {
+  const normalized = String(site || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/$/, "");
+  if (!normalized) {
+    return false;
+  }
+
+  const hostname = normalized.split("/")[0].replace(/^\[|\]$/g, "");
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+}
+
 function readBlockedSites() {
   ensureStore();
-  return JSON.parse(fs.readFileSync(BLOCKED_SITES_FILE, "utf8"));
+  const stored = JSON.parse(fs.readFileSync(BLOCKED_SITES_FILE, "utf8"));
+  const cleaned = [
+    ...new Set(stored.map((site) => String(site).trim()).filter(Boolean).filter((site) => !isAutomaticBlockedSite(site)))
+  ];
+
+  if (cleaned.length !== stored.length) {
+    fs.writeFileSync(BLOCKED_SITES_FILE, `${JSON.stringify(cleaned, null, 2)}\n`);
+  }
+
+  return cleaned;
 }
 
 function writeBlockedSites(sites) {
@@ -79,6 +102,7 @@ function writeBlockedSites(sites) {
       sites
         .map((site) => String(site).trim().toLowerCase())
         .map((site) => site.replace(/^https?:\/\//, "").replace(/\/$/, ""))
+        .filter((site) => !isAutomaticBlockedSite(site))
         .filter(Boolean)
     )
   ];

@@ -6,7 +6,6 @@ const blockedSitesForm = document.querySelector("#blocked-sites-form");
 const blockedSitesInput = document.querySelector("#blocked-sites");
 const recentTab = document.querySelector("#recent-tab");
 const flaggedTab = document.querySelector("#flagged-tab");
-const imagesOnlyInput = document.querySelector("#images-only");
 const phrasesToggle = document.querySelector("#phrases-toggle");
 const phrasesPanel = document.querySelector("#phrases-panel");
 const blockedSitesToggle = document.querySelector("#blocked-sites-toggle");
@@ -23,7 +22,6 @@ let flaggedPhrases = [];
 let blockedSites = [];
 let activeFlaggedPhrases = [];
 let activeBlockedSites = [];
-let imagesOnly = false;
 
 function escapeHtml(value) {
   return String(value)
@@ -46,10 +44,6 @@ function highlightedText(value, term) {
 
 function filterRows(rows) {
   return rows.filter((row) => {
-    if (imagesOnly && (!Array.isArray(row.imageFiles) || !row.imageFiles.length)) {
-      return false;
-    }
-
     if (shouldFilterByPhrase() && !rowMatchesActivePhrase(row)) {
       return false;
     }
@@ -524,10 +518,6 @@ form.addEventListener("submit", (event) => {
 
 recentTab.addEventListener("click", loadRecent);
 flaggedTab.addEventListener("click", loadFlagged);
-imagesOnlyInput.addEventListener("change", () => {
-  imagesOnly = imagesOnlyInput.checked;
-  reloadCurrentView();
-});
 
 phrasesToggle.addEventListener("click", () => togglePicker("phrase"));
 blockedSitesToggle.addEventListener("click", () => togglePicker("site"));

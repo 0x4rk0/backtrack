@@ -46,6 +46,11 @@ h1 {
   gap: 12px;
 }
 
+.page-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 input,
 button,
 textarea {
@@ -116,21 +121,21 @@ button:hover {
   border-color: var(--accent);
 }
 
-.filter-toggle {
+.filter-link {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
   min-height: 40px;
   padding: 0 14px;
   background: #fff;
+  color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 6px;
+  text-decoration: none;
 }
 
-.filter-toggle input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
+.filter-link:hover {
+  background: #eef1f4;
 }
 
 .picker {
@@ -261,18 +266,19 @@ button:hover {
 
 .source-results {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 24px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .result {
   display: grid;
-  gap: 14px;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
   padding: 16px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
-  align-content: start;
+  align-items: start;
 }
 
 .thumb {
@@ -290,6 +296,10 @@ button:hover {
   display: block;
   overflow: hidden;
   border-radius: 6px;
+}
+
+.result-body {
+  min-width: 0;
 }
 
 .highlight-box {
@@ -347,6 +357,62 @@ button:hover {
   flex-wrap: wrap;
   gap: 6px 10px;
   margin: 12px 0 0;
+}
+
+.image-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 24px;
+}
+
+.image-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.image-shot {
+  display: block;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.image-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  object-position: top left;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #eef1f4;
+}
+
+.image-card-body {
+  display: grid;
+  gap: 6px;
+}
+
+.image-card h2 {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.image-card-url {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.image-card-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 0;
 }
 
 .snippet mark,
@@ -492,6 +558,10 @@ textarea {
   .source-results {
     grid-template-columns: 1fr;
     gap: 16px;
+  }
+
+  .result {
+    grid-template-columns: 1fr;
   }
 
   .control-row,
