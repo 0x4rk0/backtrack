@@ -582,9 +582,11 @@ function clearCaptures() {
   writeIndex([]);
   if (fs.existsSync(CAPTURE_DIR)) {
     for (const entry of fs.readdirSync(CAPTURE_DIR)) {
-      fs.rmSync(path.join(CAPTURE_DIR, entry), { force: true });
+      fs.rmSync(path.join(CAPTURE_DIR, entry), { force: true, recursive: true });
     }
   }
+  fs.mkdirSync(CAPTURE_DIR, { recursive: true });
+  broadcastEvent("screenshot", { type: "cleared" });
 }
 
 function cleanMatches(matches) {

@@ -6,6 +6,7 @@ const blockedSitesForm = document.querySelector("#blocked-sites-form");
 const blockedSitesInput = document.querySelector("#blocked-sites");
 const recentTab = document.querySelector("#recent-tab");
 const flaggedTab = document.querySelector("#flagged-tab");
+const clearFindingsButton = document.querySelector("#clear-findings");
 const phrasesToggle = document.querySelector("#phrases-toggle");
 const phrasesPanel = document.querySelector("#phrases-panel");
 const blockedSitesToggle = document.querySelector("#blocked-sites-toggle");
@@ -439,6 +440,29 @@ async function loadRecent() {
   renderResults(payload.results || []);
 }
 
+async function clearFindings() {
+  const confirmed = window.confirm(
+    "Clear all findings from the backtrack server?\n\nThis will remove saved captures and screenshots so you can start from a clean slate."
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const response = await fetch("/api/clear", { method: "POST" });
+  if (!response.ok) {
+    statusEl.textContent = "Could not clear findings";
+    return;
+  }
+
+  currentView = "recent";
+  currentQuery = "";
+  queryInput.value = "";
+  lastRenderedSignature = "";
+  closePickers();
+  statusEl.textContent = "Findings cleared";
+  await loadRecent();
+}
+
 async function loadFlagged() {
   currentView = "flagged";
   currentQuery = "";
@@ -518,6 +542,7 @@ form.addEventListener("submit", (event) => {
 
 recentTab.addEventListener("click", loadRecent);
 flaggedTab.addEventListener("click", loadFlagged);
+clearFindingsButton.addEventListener("click", clearFindings);
 
 phrasesToggle.addEventListener("click", () => togglePicker("phrase"));
 blockedSitesToggle.addEventListener("click", () => togglePicker("site"));

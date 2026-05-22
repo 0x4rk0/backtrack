@@ -4,6 +4,7 @@
   const DEBUG_FULL = DEBUG_MODE === "full";
   const MARK_CLASS = "backtrack-highlight";
   const PAUSE_KEY = "backtrackPaused";
+  const HIGHLIGHTS_KEY = "backtrackHighlightsEnabled";
   let flaggedPhrases = [];
   let blockedSites = [];
   let settings = { captureDelayMs: 900 };
@@ -125,6 +126,7 @@
     menuEl.hidden = true;
     menuEl.innerHTML = `
       <button type="button" data-action="save">Save this page now</button>
+      <button type="button" data-action="highlights"></button>
       <button type="button" data-action="pause"></button>
     `;
     menuEl.addEventListener("click", handleMenuClick);
@@ -240,9 +242,18 @@
     return sessionStorage.getItem(PAUSE_KEY) === "true";
   }
 
+  function highlightsEnabled() {
+    return sessionStorage.getItem(HIGHLIGHTS_KEY) !== "false";
+  }
+
   function setPaused(paused) {
     sessionStorage.setItem(PAUSE_KEY, String(paused));
     updatePauseUi();
+  }
+
+  function setHighlightsEnabled(enabled) {
+    sessionStorage.setItem(HIGHLIGHTS_KEY, String(enabled));
+    updateHighlightUi();
   }
 
   function updatePauseUi() {
@@ -256,7 +267,25 @@
       ? "Resume automatic capture"
       : "Pause automatic capture";
     if (paused) {
+      clearHighlights();
       setStatus("backtrack paused");
+    }
+  }
+
+  function updateHighlightUi() {
+    if (!menuEl) {
+      return;
+    }
+
+    const enabled = highlightsEnabled();
+    menuEl.querySelector('[data-action="highlights"]').textContent = enabled
+      ? "Hide text highlights"
+      : "Show text highlights";
+
+    if (enabled && !isPaused()) {
+      lastMatchCount = highlightPhrases(flaggedPhrases);
+    } else {
+      clearHighlights();
     }
   }
 
@@ -279,9 +308,20 @@
     }
 
     if (button.dataset.action === "save") {
-    menuEl.hidden = true;
+      menuEl.hidden = true;
       statusEl.setAttribute("aria-expanded", "false");
       sendCapture("manual");
+    } else if (button.dataset.action === "highlights") {
+      setHighlightsEnabled(!highlightsEnabled());
+      menuEl.hidden = true;
+      statusEl.setAttribute("aria-expanded", "false");
+      if (!isPaused()) {
+        setStatus(
+          highlightsEnabled() && lastMatchCount
+            ? `backtrack · ${lastMatchCount} marked`
+            : "backtrack running"
+        );
+      }
     } else if (button.dataset.action === "pause") {
       setPaused(!isPaused());
       menuEl.hidden = true;
@@ -465,7 +505,26 @@
     return mark;
   }
 
+  function clearHighlights() {
+    const marks = [...document.querySelectorAll(`.${MARK_CLASS}`)];
+    for (const mark of marks) {
+      const parent = mark.parentNode;
+      if (!parent) {
+        continue;
+      }
+
+      const text = document.createTextNode(mark.textContent || "");
+      parent.replaceChild(text, mark);
+      parent.normalize();
+    }
+    lastMatchCount = 0;
+  }
+
   function highlightPhrases(phrases) {
+    clearHighlights();
+    if (!highlightsEnabled() || isPaused()) {
+      return 0;
+    }
     let count = 0;
     const normalized = phrases
       .map((phrase) => String(phrase || "").trim())
@@ -611,11 +670,12 @@
       requestSettings()
     ]);
     if (isBlockedUrl(location.href)) {
+      clearHighlights();
       setStatus("backtrack blocked here");
       return;
     }
-    lastMatchCount = highlightPhrases(flaggedPhrases);
     updatePauseUi();
+    updateHighlightUi();
     if (!isPaused()) {
       setStatus(lastMatchCount ? `backtrack · ${lastMatchCount} marked` : "backtrack running");
     }

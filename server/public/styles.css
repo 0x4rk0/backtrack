@@ -94,6 +94,13 @@ button:hover {
   align-items: center;
 }
 
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
 .control-row {
   display: flex;
   flex-wrap: wrap;
@@ -136,6 +143,20 @@ button:hover {
 
 .filter-link:hover {
   background: #eef1f4;
+}
+
+.filter-danger {
+  min-height: 40px;
+  padding: 0 14px;
+  background: #fff;
+  color: #a33434;
+  border-color: rgba(163, 52, 52, 0.28);
+}
+
+.filter-danger:hover {
+  background: #fff3f3;
+  color: #7f2525;
+  border-color: rgba(127, 37, 37, 0.4);
 }
 
 .picker {
