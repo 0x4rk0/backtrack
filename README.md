@@ -4,7 +4,7 @@ backtrack is a local OSINT webpage memory tool. A Chrome or Firefox extension sc
 
 Screenshots capture the current visible browser viewport.
 
-The server also supports flagged names and phrases. Add entries such as names, handles, companies, or keywords in the web UI. When a flagged phrase appears on a captured page, backtrack highlights it on the page before capture and stores it in a dedicated flagged section with context.
+The server also supports flagged names and phrases. Add entries such as names, handles, companies, or keywords in the web UI. Matching is case-insensitive. When a flagged phrase appears on a captured page, backtrack highlights it on the page before capture and stores it in a dedicated flagged section with context.
 
 Use the hamburger menu in the web UI to sort findings, clear captures, jump into individual flagged phrases, review blocked sites, and tune product settings such as image saving, capture delay, proxy URL, density, and accent color.
 
@@ -16,14 +16,22 @@ npm start
 
 The server listens on `http://127.0.0.1:4317` by default. Set `BACKTRACK_PORT` to use another port.
 
-Captured data is stored locally in `data/backtrack/`:
+Each server start creates a new session directory under `data/sessions/`. The session path is printed to the console on startup:
 
-- `index.json` stores capture metadata.
-- `captures/*.txt` stores extracted page text.
-- `captures/*.html` stores static local page snapshots for new captures.
-- `captures/*.png` stores screenshots.
-- `captures/*-images/` stores downloaded JPG/PNG page images.
-- `settings.json` stores product settings.
+```
+backtrack session: data/sessions/2026-06-14_10-30-00_abc123
+```
+
+Each session contains:
+
+- `index.json` — capture metadata
+- `captures/*.txt` — extracted page text
+- `captures/*.html` — static local page snapshots
+- `captures/*.png` — screenshots
+- `captures/*-images/` — downloaded JPG/PNG page images
+- `phrases.json` — flagged names and phrases
+- `blocked-sites.json` — capture block rules
+- `settings.json` — product settings
 
 ## Build the Browser Add-ons
 
@@ -71,7 +79,7 @@ Use `BACKTRACK_DEBUG=full` instead of `1` to print full page text and screenshot
 
 1. Start the server with `npm start`.
 2. Open `http://127.0.0.1:4317`.
-3. Add one flagged name or phrase per line.
+3. Add one flagged name or phrase per line. Matching is case-insensitive.
 4. Browse normally with the extension enabled.
 5. Open the **Flagged** tab to review captures containing those phrases.
 
@@ -80,6 +88,10 @@ The browser add-on also places a small backtrack status pill on webpages. Click 
 New captures include a formatted reader view and a capture view that shows the screenshot beside the static local page snapshot. The dashboard refreshes automatically and groups captures by base URL. The snapshot removes scripts and is meant for review, not for preserving a fully interactive copy of the original site.
 
 When image saving is enabled, the server extracts JPG and PNG URLs from the captured HTML and downloads them into the local capture folder. If a proxy URL is configured in settings, image fetches use that proxy. A proxy URL can include `{url}` as a placeholder, or backtrack appends `?url=<encoded-url>` / `&url=<encoded-url>`.
+
+## Delete Captures
+
+Each capture card includes a **Delete** button that removes that capture and its associated files (text, screenshot, HTML snapshot, downloaded images). To remove all captures at once, use **Clear Findings** in the hamburger menu.
 
 ## Block Capture Sites
 
@@ -92,4 +104,4 @@ To block more sites, open `http://127.0.0.1:4317` and add one host or URL path p
 
 ## Privacy Notes
 
-backtrack stores the text of pages you visit and screenshots of the visible tab. Treat `data/backtrack/` as sensitive. Do not commit captured data.
+backtrack stores the text of pages you visit and screenshots of the visible tab. Captured data lives in `data/sessions/` — one subdirectory per server session. Treat this directory as sensitive. Do not commit captured data.

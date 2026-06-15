@@ -148,7 +148,7 @@ When image saving is enabled, backtrack downloads JPG and PNG images referenced 
 
 ## Add OSINT Flags
 
-backtrack can watch for names, handles, companies, phrases, or other OSINT indicators.
+backtrack can watch for names, handles, companies, phrases, or other OSINT indicators. Matching is case-insensitive, so "CIA" and "cia" are treated as the same flag.
 
 1. Visit `http://127.0.0.1:4317`.
 2. Enter one flagged name or phrase per line in **Flagged names and phrases**.
@@ -185,24 +185,24 @@ Examples:
 
 ## Stored Data
 
-Captured data is stored locally in:
+Each server start creates a new session directory under `data/sessions/`. The session path is printed to the console at startup:
 
-```text
-data/backtrack/
+```
+backtrack session: data/sessions/2026-06-14_10-30-00_abc123
 ```
 
-Important files:
+Important files within each session directory:
 
-- `data/backtrack/index.json` stores capture metadata.
-- `data/backtrack/phrases.json` stores flagged names and phrases.
-- `data/backtrack/blocked-sites.json` stores sites skipped by capture.
-- `data/backtrack/settings.json` stores product settings.
-- `data/backtrack/captures/*.txt` stores extracted webpage text.
-- `data/backtrack/captures/*.html` stores static local page snapshots.
-- `data/backtrack/captures/*.png` stores screenshots.
-- `data/backtrack/captures/*-images/` stores downloaded JPG/PNG page images.
+- `index.json` — capture metadata
+- `phrases.json` — flagged names and phrases
+- `blocked-sites.json` — sites skipped by capture
+- `settings.json` — product settings
+- `captures/*.txt` — extracted webpage text
+- `captures/*.html` — static local page snapshots
+- `captures/*.png` — screenshots
+- `captures/*-images/` — downloaded JPG/PNG page images
 
-This directory may contain sensitive browsing data. Do not commit it or share it casually.
+The `data/sessions/` directory may contain sensitive browsing data. Do not commit it or share it casually.
 
 ## Stop backtrack
 
@@ -212,11 +212,11 @@ In the terminal running the server, press:
 Ctrl+C
 ```
 
-## Clear Captured Findings
+## Delete Captures
 
-Open `http://127.0.0.1:4317`, click the hamburger menu, then click **Clear Findings**.
+Each capture card includes a **Delete** button that removes that capture and its associated files (text, screenshot, HTML snapshot, downloaded images).
 
-This deletes captured metadata, text files, and screenshots from `data/backtrack/captures/`. It keeps your flagged names and phrases.
+To remove all captures at once, open `http://127.0.0.1:4317`, click the hamburger menu, then click **Clear Findings**. This clears the current session's captures but keeps your flagged names and phrases.
 
 The same menu also sorts results by newest, oldest, domain, or title.
 
