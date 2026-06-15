@@ -1,5 +1,9 @@
 # backtrack
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/codybernardy) [![YouTube](https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/c/0x4rko) [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://bit.ly/3YpiZZE)
+
+backtrack is a free and open source OSINT tool. Any support through Buy Me a Coffee is 100% reinvested back into the community through free tools, tutorials, and resources.
+
 backtrack is a local OSINT webpage memory tool. A Chrome or Firefox extension scans pages as you browse, sends extracted text and a screenshot to a local Node.js server, and the server gives you a searchable web UI with the original URL, title, capture time, matching text, saved page images, and screenshot.
 
 Screenshots capture the current visible browser viewport.

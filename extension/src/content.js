@@ -4,6 +4,8 @@
   const DEBUG_FULL = DEBUG_MODE === "full";
   const MARK_CLASS = "backtrack-highlight";
   const PAUSE_KEY = "backtrackPaused";
+  const WIDGET_POS_KEY = "backtrackWidgetPos";
+  const WIDGET_MIN_KEY = "backtrackWidgetMin";
   let flaggedPhrases = [];
   let blockedSites = [];
   let settings = { captureDelayMs: 900 };
@@ -33,14 +35,19 @@
         align-items: center;
         gap: 8px;
         min-height: 36px;
-        padding: 0 12px;
+        padding: 0 6px 0 12px;
         border: 1px solid rgba(8, 79, 95, 0.35);
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.96);
         color: #18202a;
         box-shadow: 0 8px 22px rgba(24, 32, 42, 0.22);
         font: 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: pointer;
+        cursor: grab;
+        user-select: none;
+        touch-action: none;
+      }
+      #backtrack-widget:active {
+        cursor: grabbing;
       }
       #backtrack-widget:hover {
         border-color: rgba(8, 79, 95, 0.8);
@@ -48,11 +55,24 @@
       #backtrack-widget[aria-expanded="true"] {
         border-color: rgba(8, 79, 95, 0.8);
       }
+      #backtrack-widget.minimized {
+        padding: 0;
+        min-height: 28px;
+        width: 28px;
+        justify-content: center;
+        cursor: pointer;
+      }
+      #backtrack-widget.minimized #backtrack-widget-label,
+      #backtrack-widget.minimized #backtrack-widget-caret,
+      #backtrack-widget.minimized #backtrack-widget-min {
+        display: none;
+      }
       #backtrack-widget-dot {
         width: 9px;
         height: 9px;
         border-radius: 50%;
         background: #0b6f85;
+        flex-shrink: 0;
       }
       #backtrack-widget.paused #backtrack-widget-dot {
         background: #a33434;
@@ -64,10 +84,28 @@
         color: #657282;
         font-size: 11px;
       }
+      #backtrack-widget-min {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: transparent;
+        color: #657282;
+        font-size: 15px;
+        line-height: 1;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      #backtrack-widget-min:hover {
+        background: rgba(24, 32, 42, 0.1);
+        color: #18202a;
+      }
       #backtrack-menu {
         position: fixed;
-        right: 18px;
-        bottom: 62px;
         z-index: 2147483647;
         display: grid;
         gap: 6px;
@@ -100,14 +138,124 @@
     document.documentElement.appendChild(style);
   }
 
+  function loadWidgetPosition() {
+    try { return JSON.parse(localStorage.getItem(WIDGET_POS_KEY)); } catch { return null; }
+  }
+
+  function saveWidgetPosition() {
+    try {
+      const r = statusEl.getBoundingClientRect();
+      localStorage.setItem(WIDGET_POS_KEY, JSON.stringify({ left: r.left, top: r.top }));
+    } catch {}
+  }
+
+  function applyWidgetPosition(left, top) {
+    const w = statusEl.offsetWidth || 180;
+    const h = statusEl.offsetHeight || 36;
+    left = Math.max(4, Math.min(left, window.innerWidth - w - 4));
+    top = Math.max(4, Math.min(top, window.innerHeight - h - 4));
+    statusEl.style.left = `${left}px`;
+    statusEl.style.top = `${top}px`;
+    statusEl.style.right = "auto";
+    statusEl.style.bottom = "auto";
+  }
+
+  function initWidgetState() {
+    const pos = loadWidgetPosition();
+    if (pos) applyWidgetPosition(pos.left, pos.top);
+    try {
+      if (localStorage.getItem(WIDGET_MIN_KEY) === "true") setMinimized(true);
+    } catch {}
+  }
+
+  function positionMenu() {
+    const wr = statusEl.getBoundingClientRect();
+    const mh = menuEl.offsetHeight || 90;
+    const mw = menuEl.offsetWidth || 190;
+    const top = wr.top > mh + 12 ? wr.top - mh - 8 : wr.bottom + 8;
+    let left = wr.left;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    menuEl.style.right = "auto";
+    menuEl.style.bottom = "auto";
+    menuEl.style.left = `${Math.max(8, left)}px`;
+    menuEl.style.top = `${top}px`;
+  }
+
+  function isMinimized() {
+    return statusEl && statusEl.classList.contains("minimized");
+  }
+
+  function setMinimized(v) {
+    if (!statusEl) return;
+    statusEl.classList.toggle("minimized", v);
+    try { localStorage.setItem(WIDGET_MIN_KEY, String(v)); } catch {}
+  }
+
   function createWidget() {
-    statusEl = document.createElement("button");
+    statusEl = document.createElement("div");
     statusEl.id = "backtrack-widget";
-    statusEl.type = "button";
-    statusEl.title = "backtrack is running. Open controls.";
+    statusEl.setAttribute("role", "button");
+    statusEl.setAttribute("tabindex", "0");
     statusEl.setAttribute("aria-expanded", "false");
-    statusEl.innerHTML = `<span id="backtrack-widget-dot"></span><span id="backtrack-widget-label">backtrack running</span><span id="backtrack-widget-caret">▾</span>`;
-    statusEl.addEventListener("click", toggleMenu);
+    statusEl.title = "backtrack is running. Drag to move, click to open controls.";
+    statusEl.innerHTML = `<span id="backtrack-widget-dot"></span><span id="backtrack-widget-label">backtrack running</span><span id="backtrack-widget-caret">▾</span><button id="backtrack-widget-min" type="button" title="Minimize">−</button>`;
+
+    let drag = null;
+
+    statusEl.addEventListener("mousedown", (e) => {
+      if (e.target.closest("#backtrack-widget-min")) return;
+      e.preventDefault();
+      const rect = statusEl.getBoundingClientRect();
+      drag = {
+        startX: e.clientX,
+        startY: e.clientY,
+        origLeft: rect.left,
+        origTop: rect.top,
+        moved: false
+      };
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      if (!drag.moved && Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+      drag.moved = true;
+      applyWidgetPosition(drag.origLeft + dx, drag.origTop + dy);
+    });
+
+    document.addEventListener("mouseup", () => {
+      if (!drag) return;
+      if (!drag.moved) {
+        if (isMinimized()) {
+          setMinimized(false);
+        } else {
+          toggleMenu();
+        }
+      } else {
+        saveWidgetPosition();
+        if (menuEl && !menuEl.hidden) positionMenu();
+      }
+      drag = null;
+    });
+
+    statusEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        if (isMinimized()) setMinimized(false);
+        else toggleMenu();
+      }
+    });
+
+    statusEl.querySelector("#backtrack-widget-min").addEventListener("click", (e) => {
+      e.stopPropagation();
+      setMinimized(true);
+      if (menuEl && !menuEl.hidden) {
+        menuEl.hidden = true;
+        statusEl.setAttribute("aria-expanded", "false");
+      }
+    });
+
     document.documentElement.appendChild(statusEl);
 
     menuEl = document.createElement("div");
@@ -119,6 +267,8 @@
     `;
     menuEl.addEventListener("click", handleMenuClick);
     document.documentElement.appendChild(menuEl);
+
+    initWidgetState();
     updatePauseUi();
   }
 
@@ -156,8 +306,10 @@
     if (!menuEl || !statusEl) {
       return;
     }
-    menuEl.hidden = !menuEl.hidden;
-    statusEl.setAttribute("aria-expanded", String(!menuEl.hidden));
+    const nowOpen = menuEl.hidden;
+    menuEl.hidden = !nowOpen;
+    statusEl.setAttribute("aria-expanded", String(nowOpen));
+    if (nowOpen) positionMenu();
   }
 
   function handleMenuClick(event) {
