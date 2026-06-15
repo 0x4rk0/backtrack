@@ -75,7 +75,7 @@ function readPhrases() {
 }
 
 function writePhrases(phrases) {
-  const cleaned = [...new Set(phrases.map((phrase) => String(phrase).trim()).filter(Boolean))];
+  const cleaned = [...new Set(phrases.map((phrase) => String(phrase).trim().toLowerCase()).filter(Boolean))];
   fs.writeFileSync(PHRASES_FILE, `${JSON.stringify(cleaned, null, 2)}\n`);
   return cleaned;
 }
