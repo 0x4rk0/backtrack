@@ -6,23 +6,26 @@ const blockedSitesForm = document.querySelector("#blocked-sites-form");
 const blockedSitesInput = document.querySelector("#blocked-sites");
 const recentTab = document.querySelector("#recent-tab");
 const flaggedTab = document.querySelector("#flagged-tab");
-const clearFindingsButton = document.querySelector("#clear-findings");
-const phrasesToggle = document.querySelector("#phrases-toggle");
-const phrasesPanel = document.querySelector("#phrases-panel");
-const blockedSitesToggle = document.querySelector("#blocked-sites-toggle");
-const blockedSitesPanel = document.querySelector("#blocked-sites-panel");
+const menuToggle = document.querySelector("#menu-toggle");
+const menuPanel = document.querySelector("#menu-panel");
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
-
 let linkChoiceEl;
 let currentView = "recent";
 let currentQuery = "";
+let sortValue = "newest";
 let lastRenderedSignature = "";
 let refreshTimer;
 let flaggedPhrases = [];
 let blockedSites = [];
-let activeFlaggedPhrases = [];
-let activeBlockedSites = [];
+let settings = {
+  saveImages: true,
+  maxImagesPerCapture: 24,
+  captureDelayMs: 900,
+  proxyUrl: "",
+  density: "comfortable",
+  accentColor: "#0b6f85"
+};
 
 function escapeHtml(value) {
   return String(value)
@@ -41,72 +44,6 @@ function highlightedText(value, term) {
 
   const safeTerm = escapeHtml(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return escaped.replace(new RegExp(`(${safeTerm})`, "ig"), "<mark>$1</mark>");
-}
-
-function filterRows(rows) {
-  return rows.filter((row) => {
-    if (shouldFilterByPhrase() && !rowMatchesActivePhrase(row)) {
-      return false;
-    }
-
-    if (shouldFilterByBlockedSite() && !rowMatchesActiveBlockedSite(row)) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-function normalizeValue(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function shouldFilterByPhrase() {
-  return activeFlaggedPhrases.length > 0 && activeFlaggedPhrases.length < flaggedPhrases.length;
-}
-
-function shouldFilterByBlockedSite() {
-  return activeBlockedSites.length > 0 && activeBlockedSites.length < blockedSites.length;
-}
-
-function rowMatchesActivePhrase(row) {
-  if (!activeFlaggedPhrases.length) {
-    return true;
-  }
-
-  const matches = (row.matches || []).map((match) => normalizeValue(match.phrase));
-  return activeFlaggedPhrases.some((phrase) => matches.includes(normalizeValue(phrase)));
-}
-
-function rowMatchesRule(urlValue, rule) {
-  try {
-    const url = new URL(urlValue);
-    const normalizedRule = String(rule || "").trim().toLowerCase();
-    if (!normalizedRule) {
-      return false;
-    }
-
-    const [hostRule, ...pathParts] = normalizedRule.split("/");
-    const pathRule = pathParts.length ? `/${pathParts.join("/")}` : "";
-    const host = url.hostname.toLowerCase();
-    const hostMatches = host === hostRule || host.endsWith(`.${hostRule}`);
-
-    if (!hostMatches) {
-      return false;
-    }
-
-    return pathRule ? url.pathname.toLowerCase().startsWith(pathRule) : true;
-  } catch (error) {
-    return false;
-  }
-}
-
-function rowMatchesActiveBlockedSite(row) {
-  if (!activeBlockedSites.length) {
-    return true;
-  }
-
-  return activeBlockedSites.some((rule) => rowMatchesRule(row.url, rule));
 }
 
 function screenshotBlock(row) {
@@ -130,7 +67,7 @@ function screenshotBlock(row) {
 
   return `
     <a class="shot" href="${escapeHtml(row.viewFile || `/view/${encodeURIComponent(row.id)}`)}" target="_blank" rel="noreferrer">
-      <img class="thumb" src="${row.screenshotFile}" alt="">
+      <img class="thumb" src="${escapeHtml(row.screenshotFile)}" alt="">
       ${boxes}
     </a>
   `;
@@ -160,7 +97,9 @@ function matchList(row, query) {
 function captureLinks(row) {
   const readerUrl = row.readerFile || (row.id ? `/reader/${encodeURIComponent(row.id)}` : row.textFile);
   const viewUrl = row.viewFile || (row.id ? `/view/${encodeURIComponent(row.id)}` : "");
-  const links = [`<a href="${escapeHtml(readerUrl)}" target="_blank" rel="noreferrer">Read captured text</a>`];
+  const links = [
+    `<a href="${escapeHtml(readerUrl)}" target="_blank" rel="noreferrer">Read captured text</a>`
+  ];
 
   if (viewUrl) {
     links.push(`<a href="${escapeHtml(viewUrl)}" target="_blank" rel="noreferrer">View capture</a>`);
@@ -173,7 +112,10 @@ function captureLinks(row) {
   }
 
   links.push(`<a href="${escapeHtml(row.textFile)}" target="_blank" rel="noreferrer">Raw text</a>`);
-  return `<p class="capture-links">${links.join(" · ")}</p>`;
+  const deleteBtn = row.id
+    ? ` · <button type="button" class="capture-link-delete" data-capture-id="${escapeHtml(row.id)}">Delete</button>`
+    : "";
+  return `<p class="capture-links">${links.join(" · ")}${deleteBtn}</p>`;
 }
 
 function baseUrl(row) {
@@ -196,14 +138,14 @@ function baseLabel(base) {
 function resultCard(row) {
   const title = escapeHtml(row.title || row.url);
   const viewUrl = row.viewFile || (row.id ? `/view/${encodeURIComponent(row.id)}` : row.textFile);
+  const captureId = escapeHtml(row.id || "");
   const snippet = row.snippet
-    ? highlightedText(row.snippet, currentQuery ? currentQuery : "")
+    ? highlightedText(row.snippet, currentView === "search" ? currentQuery : "")
     : "Match found in the title, URL, or flagged phrase list.";
-
   return `
-    <article class="result">
+    <article class="result" data-capture-id="${captureId}">
       ${screenshotBlock(row)}
-      <div class="result-body">
+      <div>
         <h2>
           <button
             type="button"
@@ -214,7 +156,7 @@ function resultCard(row) {
         </h2>
         <div class="meta">${escapeHtml(new Date(row.createdAt).toLocaleString())} · ${escapeHtml(row.url)}</div>
         <p class="snippet">${snippet}</p>
-        ${matchList(row, currentQuery ? currentQuery : "")}
+        ${matchList(row, currentView === "search" ? currentQuery : "")}
         ${captureLinks(row)}
       </div>
     </article>
@@ -222,11 +164,13 @@ function resultCard(row) {
 }
 
 function renderResults(rows) {
-  const filteredRows = filterRows(rows);
   lastRenderedSignature = rows.map((row) => `${row.id}:${row.createdAt}`).join("|");
+  if (!rows.length) {
+    resultsEl.innerHTML = `<p class="empty-state">${currentView === "flagged" ? "No flagged captures yet." : currentView === "search" ? "No results found." : "No captures yet. Browse with the extension to start collecting."}</p>`;
+    return;
+  }
   const groups = new Map();
-
-  for (const row of filteredRows) {
+  for (const row of rows) {
     const base = baseUrl(row);
     if (!groups.has(base)) {
       groups.set(base, []);
@@ -235,96 +179,21 @@ function renderResults(rows) {
   }
 
   resultsEl.innerHTML = [...groups.entries()]
-    .map(
-      ([base, groupRows]) => `
-        <section class="source-group">
-          <header class="source-header">
-            <div>
-              <h2>${escapeHtml(baseLabel(base))}</h2>
-              <a href="${escapeHtml(base)}" target="_blank" rel="noreferrer">${escapeHtml(base)}</a>
-            </div>
-            <span>${groupRows.length} capture${groupRows.length === 1 ? "" : "s"}</span>
-          </header>
-          <div class="source-results">
-            ${groupRows.map(resultCard).join("")}
+    .map(([base, groupRows], index) => `
+      <section class="source-group">
+        <header class="source-header">
+          <div>
+            <h2>${escapeHtml(baseLabel(base))}</h2>
+            <a href="${escapeHtml(base)}" target="_blank" rel="noreferrer">${escapeHtml(base)}</a>
           </div>
-        </section>
-      `
-    )
+          <span>${groupRows.length} capture${groupRows.length === 1 ? "" : "s"}</span>
+        </header>
+        <div class="source-results">
+          ${groupRows.map(resultCard).join("")}
+        </div>
+      </section>
+    `)
     .join("");
-
-  if (!filteredRows.length) {
-    resultsEl.innerHTML = `<section class="empty-state">No captures match this view.</section>`;
-  }
-}
-
-function updateTabs() {
-  recentTab.classList.toggle("active", currentView === "recent");
-  flaggedTab.classList.toggle("active", currentView === "flagged");
-}
-
-function updatePickerButton(toggle, activeCount, totalCount, label) {
-  if (!totalCount) {
-    toggle.textContent = `${label} (0)`;
-    return;
-  }
-
-  toggle.textContent = `${label} (${activeCount}/${totalCount})`;
-}
-
-function renderPicker(panel, items, type) {
-  const title = type === "phrase" ? "phrase" : "site";
-  const activeItems = type === "phrase" ? activeFlaggedPhrases : activeBlockedSites;
-  panel.innerHTML = `
-    <div class="picker-list">
-      ${items.length
-        ? items
-            .map(
-              (item, index) => `
-                <label class="picker-item">
-                  <input type="checkbox" data-type="${type}" data-index="${index}" ${activeItems.includes(item) ? "checked" : ""}>
-                  <span>${escapeHtml(item)}</span>
-                </label>
-              `
-            )
-            .join("")
-        : `<p class="picker-empty">No ${title}s saved.</p>`}
-    </div>
-    <form class="picker-add" data-type="${type}">
-      <input type="text" name="value" placeholder="Add ${title}">
-      <button type="submit">Add</button>
-    </form>
-  `;
-}
-
-function closePickers() {
-  phrasesPanel.hidden = true;
-  blockedSitesPanel.hidden = true;
-  phrasesToggle.setAttribute("aria-expanded", "false");
-  blockedSitesToggle.setAttribute("aria-expanded", "false");
-}
-
-function togglePicker(type) {
-  const panel = type === "phrase" ? phrasesPanel : blockedSitesPanel;
-  const toggle = type === "phrase" ? phrasesToggle : blockedSitesToggle;
-  const isOpen = !panel.hidden;
-  closePickers();
-  panel.hidden = isOpen;
-  toggle.setAttribute("aria-expanded", String(!isOpen));
-}
-
-function syncPhrases() {
-  phrasesInput.value = flaggedPhrases.join("\n");
-  activeFlaggedPhrases = activeFlaggedPhrases.filter((phrase) => flaggedPhrases.includes(phrase));
-  renderPicker(phrasesPanel, flaggedPhrases, "phrase");
-  updatePickerButton(phrasesToggle, activeFlaggedPhrases.length, flaggedPhrases.length, "Flagged names and phrases");
-}
-
-function syncBlockedSites() {
-  blockedSitesInput.value = blockedSites.join("\n");
-  activeBlockedSites = activeBlockedSites.filter((site) => blockedSites.includes(site));
-  renderPicker(blockedSitesPanel, blockedSites, "site");
-  updatePickerButton(blockedSitesToggle, activeBlockedSites.length, blockedSites.length, "Blocked sites");
 }
 
 function ensureLinkChoice() {
@@ -379,8 +248,17 @@ function openChoiceTarget(target) {
   closeLinkChoice();
 }
 
+async function loadPhrases() {
+  const response = await fetch("/api/phrases");
+  const payload = await response.json();
+  flaggedPhrases = payload.phrases || [];
+  phrasesInput.value = flaggedPhrases.join("\n");
+  renderMenuPanel();
+}
+
 async function savePhrases() {
-  const phrases = flaggedPhrases
+  const phrases = phrasesInput.value
+    .split(/\n|,/)
     .map((phrase) => phrase.trim())
     .filter(Boolean);
 
@@ -391,96 +269,158 @@ async function savePhrases() {
   });
   const payload = await response.json();
   flaggedPhrases = payload.phrases || [];
-  syncPhrases();
-  statusEl.textContent = `Saved ${flaggedPhrases.length} flagged phrase${flaggedPhrases.length === 1 ? "" : "s"}`;
-  reloadCurrentView();
-}
-
-async function saveBlockedSites() {
-  const nextBlockedSites = blockedSites
-    .map((site) => site.trim())
-    .filter(Boolean);
-
-  const response = await fetch("/api/blocked-sites", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ blockedSites: nextBlockedSites })
-  });
-  const payload = await response.json();
-  blockedSites = payload.blockedSites || [];
-  syncBlockedSites();
-  statusEl.textContent = `Saved ${blockedSites.length} blocked site${blockedSites.length === 1 ? "" : "s"}`;
-  reloadCurrentView();
-}
-
-async function loadPhrases() {
-  const response = await fetch("/api/phrases");
-  const payload = await response.json();
-  flaggedPhrases = payload.phrases || [];
-  activeFlaggedPhrases = [...flaggedPhrases];
-  syncPhrases();
+  phrasesInput.value = flaggedPhrases.join("\n");
+  statusEl.textContent = `Saved ${payload.phrases.length} flagged phrase${payload.phrases.length === 1 ? "" : "s"}`;
+  renderMenuPanel();
 }
 
 async function loadBlockedSites() {
   const response = await fetch("/api/blocked-sites");
   const payload = await response.json();
   blockedSites = payload.blockedSites || [];
-  activeBlockedSites = [...blockedSites];
-  syncBlockedSites();
+  blockedSitesInput.value = blockedSites.join("\n");
+  renderMenuPanel();
+}
+
+async function saveBlockedSites() {
+  const blockedSites = blockedSitesInput.value
+    .split(/\n|,/)
+    .map((site) => site.trim())
+    .filter(Boolean);
+
+  const response = await fetch("/api/blocked-sites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blockedSites })
+  });
+  const payload = await response.json();
+  blockedSites = payload.blockedSites || [];
+  blockedSitesInput.value = blockedSites.join("\n");
+  statusEl.textContent = `Saved ${payload.blockedSites.length} blocked site${payload.blockedSites.length === 1 ? "" : "s"}`;
+  renderMenuPanel();
+}
+
+async function loadSettings() {
+  const response = await fetch("/api/settings");
+  const payload = await response.json();
+  settings = { ...settings, ...(payload.settings || {}) };
+  applySettings();
+  renderMenuPanel();
+}
+
+async function saveSettingsFromMenu() {
+  const formData = new FormData(menuPanel.querySelector("#settings-form"));
+  settings = {
+    ...settings,
+    saveImages: formData.get("saveImages") === "on",
+    maxImagesPerCapture: Number(formData.get("maxImagesPerCapture")),
+    captureDelayMs: Number(formData.get("captureDelayMs")),
+    proxyUrl: String(formData.get("proxyUrl") || ""),
+    density: String(formData.get("density") || "comfortable"),
+    accentColor: String(formData.get("accentColor") || "#0b6f85")
+  };
+  const response = await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings })
+  });
+  const payload = await response.json();
+  settings = payload.settings || settings;
+  applySettings();
+  renderMenuPanel();
+  statusEl.textContent = "Saved settings";
+}
+
+function applySettings() {
+  document.documentElement.style.setProperty("--accent", settings.accentColor);
+  document.documentElement.classList.toggle("compact-density", settings.density === "compact");
+  document.documentElement.classList.toggle("spacious-density", settings.density === "spacious");
+}
+
+function renderMenuPanel() {
+  menuPanel.innerHTML = `
+    <details open>
+      <summary>Findings <span class="help" title="Operational controls for sorting and clearing captured findings.">?</span></summary>
+      <label for="sort-mode">Sort findings</label>
+      <select id="sort-mode">
+        <option value="newest"${sortValue === "newest" ? " selected" : ""}>Newest first</option>
+        <option value="oldest"${sortValue === "oldest" ? " selected" : ""}>Oldest first</option>
+        <option value="domain"${sortValue === "domain" ? " selected" : ""}>Domain</option>
+        <option value="title"${sortValue === "title" ? " selected" : ""}>Title</option>
+      </select>
+      <button type="button" id="clear-findings" class="danger-button">Clear Findings</button>
+    </details>
+    <details>
+      <summary>Flagged phrases <span class="help" title="Quick filters for phrase-specific matches from your flagged phrase list.">?</span></summary>
+      <div class="menu-list">
+        ${flaggedPhrases.length ? flaggedPhrases.map((phrase) => `<button type="button" data-phrase="${escapeHtml(phrase)}">${escapeHtml(phrase)} <span class="help" title="Filter flagged results to this phrase.">?</span></button>`).join("") : `<p>No flagged phrases saved.</p>`}
+      </div>
+    </details>
+    <details>
+      <summary>Blocked sites <span class="help" title="Sites listed here are skipped by extension capture and server-side save checks.">?</span></summary>
+      <div class="menu-list">
+        ${blockedSites.length ? blockedSites.map((site) => `<span>${escapeHtml(site)} <span class="help" title="Matches this host or URL pattern and blocks capture.">?</span></span>`).join("") : `<p>No blocked sites saved.</p>`}
+      </div>
+    </details>
+    <details>
+      <summary>Settings <span class="help" title="Capture behavior, UI preferences, and image fetch options.">?</span></summary>
+      <form id="settings-form" class="settings-form">
+        <label><input type="checkbox" name="saveImages"${settings.saveImages ? " checked" : ""}> Save JPG/PNG images locally <span class="help" title="When enabled, backtrack downloads jpg/png assets referenced by captured page HTML.">?</span></label>
+        <label>Images per capture <span class="help" title="Maximum number of jpg/png assets to save from one captured page.">?</span> <input type="number" name="maxImagesPerCapture" min="0" max="100" value="${escapeHtml(settings.maxImagesPerCapture)}"></label>
+        <label>Capture delay <span class="help" title="Milliseconds to wait after page load before automatic extension capture starts.">?</span> <input type="number" name="captureDelayMs" min="250" max="10000" step="250" value="${escapeHtml(settings.captureDelayMs)}"></label>
+        <label>Proxy URL <span class="help" title="Optional proxy used for server-side image downloads. Use {url} placeholder or leave blank.">?</span> <input type="url" name="proxyUrl" placeholder="https://proxy.example/fetch?url=" value="${escapeHtml(settings.proxyUrl)}"></label>
+        <label>Density <span class="help" title="Adjusts spacing density of capture cards in the dashboard.">?</span>
+          <select name="density">
+            <option value="compact"${settings.density === "compact" ? " selected" : ""}>Compact</option>
+            <option value="comfortable"${settings.density === "comfortable" ? " selected" : ""}>Comfortable</option>
+            <option value="spacious"${settings.density === "spacious" ? " selected" : ""}>Spacious</option>
+          </select>
+        </label>
+        <label>Accent <span class="help" title="Primary UI action color used across buttons and links.">?</span> <input type="color" name="accentColor" value="${escapeHtml(settings.accentColor)}"></label>
+        <button type="submit">Save Settings</button>
+      </form>
+    </details>
+  `;
 }
 
 async function loadRecent() {
   currentView = "recent";
   currentQuery = "";
-  updateTabs();
-  const response = await fetch("/api/recent");
+  const response = await fetch(`/api/recent?sort=${encodeURIComponent(sortValue)}`);
   const payload = await response.json();
-  const filteredRows = filterRows(payload.results || []);
-  statusEl.textContent = `Recent captures (${filteredRows.length})`;
-  renderResults(payload.results || []);
-}
-
-async function clearFindings() {
-  const confirmed = window.confirm(
-    "Clear all findings from the backtrack server?\n\nThis will remove saved captures and screenshots so you can start from a clean slate."
-  );
-  if (!confirmed) {
-    return;
-  }
-
-  const response = await fetch("/api/clear", { method: "POST" });
-  if (!response.ok) {
-    statusEl.textContent = "Could not clear findings";
-    return;
-  }
-
-  currentView = "recent";
-  currentQuery = "";
-  queryInput.value = "";
-  lastRenderedSignature = "";
-  closePickers();
-  statusEl.textContent = "Findings cleared";
-  await loadRecent();
+  statusEl.textContent = `Recent captures (${payload.results.length})`;
+  renderResults(payload.results);
 }
 
 async function loadFlagged() {
   currentView = "flagged";
   currentQuery = "";
-  updateTabs();
-  const response = await fetch("/api/flagged");
+  const response = await fetch(`/api/flagged?sort=${encodeURIComponent(sortValue)}`);
   const payload = await response.json();
-  const filteredRows = filterRows(payload.results || []);
-  statusEl.textContent = `Flagged captures (${filteredRows.length})`;
-  renderResults(payload.results || []);
+  statusEl.textContent = `Flagged captures (${payload.results.length})`;
+  renderResults(payload.results);
+}
+
+async function loadFlaggedByPhrase(phrase) {
+  currentView = "flagged";
+  currentQuery = "";
+  const response = await fetch(
+    `/api/flagged?phrase=${encodeURIComponent(phrase)}&sort=${encodeURIComponent(sortValue)}`
+  );
+  const payload = await response.json();
+  statusEl.textContent = `Flagged captures for "${phrase}" (${payload.results.length})`;
+  renderResults(payload.results);
 }
 
 async function search(query) {
+  currentView = "search";
   currentQuery = query;
-  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+  const response = await fetch(
+    `/api/search?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sortValue)}`
+  );
   const payload = await response.json();
-  const filteredRows = filterRows(payload.results || []);
-  statusEl.textContent = `${filteredRows.length} result${filteredRows.length === 1 ? "" : "s"} for "${query}"`;
-  renderResults(payload.results || []);
+  statusEl.textContent = `${payload.results.length} result${payload.results.length === 1 ? "" : "s"} for "${query}"`;
+  renderResults(payload.results);
 }
 
 async function refreshIfChanged() {
@@ -488,10 +428,10 @@ async function refreshIfChanged() {
     return;
   }
 
-  const response = await fetch("/api/recent");
+  const response = await fetch(`/api/recent?sort=${encodeURIComponent(sortValue)}`);
   const payload = await response.json();
   const signature = (payload.results || []).map((row) => `${row.id}:${row.createdAt}`).join("|");
-  if (signature !== lastRenderedSignature && currentQuery === "") {
+  if (signature !== lastRenderedSignature && currentView !== "search") {
     reloadCurrentView();
   }
 }
@@ -521,10 +461,10 @@ function connectCaptureEvents() {
 }
 
 function reloadCurrentView() {
-  if (currentQuery) {
-    search(currentQuery);
-  } else if (currentView === "flagged") {
+  if (currentView === "flagged") {
     loadFlagged();
+  } else if (currentView === "search" && currentQuery) {
+    search(currentQuery);
   } else {
     loadRecent();
   }
@@ -536,76 +476,38 @@ form.addEventListener("submit", (event) => {
   if (query) {
     search(query);
   } else {
-    reloadCurrentView();
+    loadRecent();
   }
+});
+
+phrasesForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  savePhrases();
+});
+
+blockedSitesForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveBlockedSites();
 });
 
 recentTab.addEventListener("click", loadRecent);
 flaggedTab.addEventListener("click", loadFlagged);
-clearFindingsButton.addEventListener("click", clearFindings);
-
-phrasesToggle.addEventListener("click", () => togglePicker("phrase"));
-blockedSitesToggle.addEventListener("click", () => togglePicker("site"));
-
-phrasesPanel.addEventListener("change", (event) => {
-  if (!event.target.matches('input[type="checkbox"][data-type="phrase"]')) {
+resultsEl.addEventListener("click", async (event) => {
+  const deleteBtn = event.target.closest(".capture-link-delete");
+  if (deleteBtn) {
+    const id = deleteBtn.dataset.captureId;
+    if (!window.confirm("Delete this capture and its files? This cannot be undone.")) return;
+    await fetch(`/api/captures/${encodeURIComponent(id)}/delete`, { method: "POST" });
+    const card = deleteBtn.closest(".result");
+    const group = card && card.closest(".source-group");
+    if (card) card.remove();
+    if (group && !group.querySelector(".result")) group.remove();
+    if (!resultsEl.querySelector(".result")) {
+      resultsEl.innerHTML = `<p class="empty-state">${currentView === "flagged" ? "No flagged captures yet." : "No captures yet. Browse with the extension to start collecting."}</p>`;
+    }
     return;
   }
-  const phrase = flaggedPhrases[Number(event.target.dataset.index)];
-  activeFlaggedPhrases = event.target.checked
-    ? [...activeFlaggedPhrases, phrase]
-    : activeFlaggedPhrases.filter((value) => value !== phrase);
-  syncPhrases();
-  reloadCurrentView();
-});
 
-blockedSitesPanel.addEventListener("change", (event) => {
-  if (!event.target.matches('input[type="checkbox"][data-type="site"]')) {
-    return;
-  }
-  const site = blockedSites[Number(event.target.dataset.index)];
-  activeBlockedSites = event.target.checked
-    ? [...activeBlockedSites, site]
-    : activeBlockedSites.filter((value) => value !== site);
-  syncBlockedSites();
-  reloadCurrentView();
-});
-
-phrasesPanel.addEventListener("submit", (event) => {
-  const addForm = event.target.closest('.picker-add[data-type="phrase"]');
-  if (!addForm) {
-    return;
-  }
-  event.preventDefault();
-  const input = addForm.querySelector('input[name="value"]');
-  const value = input.value.trim();
-  if (!value || flaggedPhrases.includes(value)) {
-    return;
-  }
-  flaggedPhrases = [...flaggedPhrases, value];
-  activeFlaggedPhrases = [...activeFlaggedPhrases, value];
-  input.value = "";
-  savePhrases();
-});
-
-blockedSitesPanel.addEventListener("submit", (event) => {
-  const addForm = event.target.closest('.picker-add[data-type="site"]');
-  if (!addForm) {
-    return;
-  }
-  event.preventDefault();
-  const input = addForm.querySelector('input[name="value"]');
-  const value = input.value.trim();
-  if (!value || blockedSites.includes(value)) {
-    return;
-  }
-  blockedSites = [...blockedSites, value];
-  activeBlockedSites = [...activeBlockedSites, value];
-  input.value = "";
-  saveBlockedSites();
-});
-
-resultsEl.addEventListener("click", (event) => {
   const button = event.target.closest(".title-link");
   if (!button) {
     return;
@@ -613,12 +515,49 @@ resultsEl.addEventListener("click", (event) => {
 
   openLinkChoice(button.dataset.externalUrl, button.dataset.localUrl);
 });
+menuToggle.addEventListener("click", () => {
+  const isOpen = !menuPanel.hidden;
+  menuPanel.hidden = isOpen;
+  menuToggle.setAttribute("aria-expanded", String(!isOpen));
+});
 
-document.addEventListener("click", (event) => {
-  if (!event.target.closest(".picker")) {
-    closePickers();
+menuPanel.addEventListener("change", (event) => {
+  if (event.target.id === "sort-mode") {
+    sortValue = event.target.value;
+    reloadCurrentView();
+  }
+});
+
+menuPanel.addEventListener("submit", (event) => {
+  if (event.target.id !== "settings-form") {
+    return;
+  }
+  event.preventDefault();
+  saveSettingsFromMenu();
+});
+
+menuPanel.addEventListener("click", async (event) => {
+  if (event.target.id === "clear-findings") {
+    const confirmed = window.confirm(
+      "Clear all captured findings, text files, and screenshots? Flagged phrase settings will remain."
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await fetch("/api/clear", { method: "POST" });
+    statusEl.textContent = "Cleared captured findings";
+    renderResults([]);
+    return;
   }
 
+  const phraseButton = event.target.closest("[data-phrase]");
+  if (phraseButton) {
+    loadFlaggedByPhrase(phraseButton.dataset.phrase);
+  }
+});
+
+document.addEventListener("click", (event) => {
   const actionTarget = event.target.closest("[data-action]");
   const action = actionTarget && actionTarget.dataset.action;
   if (!action || !actionTarget.closest(".link-choice")) {
@@ -634,12 +573,18 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    closePickers();
     closeLinkChoice();
+    return;
+  }
+  if (event.key === "/" && !event.target.matches("input, textarea, select, button")) {
+    event.preventDefault();
+    queryInput.focus();
+    queryInput.select();
   }
 });
 
 loadPhrases();
 loadBlockedSites();
+loadSettings();
 loadRecent();
 connectCaptureEvents();

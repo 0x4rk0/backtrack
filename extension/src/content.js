@@ -4,7 +4,6 @@
   const DEBUG_FULL = DEBUG_MODE === "full";
   const MARK_CLASS = "backtrack-highlight";
   const PAUSE_KEY = "backtrackPaused";
-  const HIGHLIGHTS_KEY = "backtrackHighlightsEnabled";
   let flaggedPhrases = [];
   let blockedSites = [];
   let settings = { captureDelayMs: 900 };
@@ -12,9 +11,6 @@
   let captureInFlight = false;
   let statusEl;
   let menuEl;
-  let widgetPosition = null;
-  let dragState = null;
-  let lastDragEndedAt = 0;
 
   function injectStyles() {
     const style = document.createElement("style");
@@ -30,8 +26,8 @@
       }
       #backtrack-widget {
         position: fixed;
-        left: auto;
-        top: auto;
+        right: 18px;
+        bottom: 18px;
         z-index: 2147483647;
         display: flex;
         align-items: center;
@@ -44,13 +40,7 @@
         color: #18202a;
         box-shadow: 0 8px 22px rgba(24, 32, 42, 0.22);
         font: 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        cursor: grab;
-        touch-action: none;
-        user-select: none;
-        -webkit-user-select: none;
-      }
-      #backtrack-widget.dragging {
-        cursor: grabbing;
+        cursor: pointer;
       }
       #backtrack-widget:hover {
         border-color: rgba(8, 79, 95, 0.8);
@@ -76,8 +66,8 @@
       }
       #backtrack-menu {
         position: fixed;
-        left: auto;
-        top: auto;
+        right: 18px;
+        bottom: 62px;
         z-index: 2147483647;
         display: grid;
         gap: 6px;
@@ -117,7 +107,6 @@
     statusEl.title = "backtrack is running. Open controls.";
     statusEl.setAttribute("aria-expanded", "false");
     statusEl.innerHTML = `<span id="backtrack-widget-dot"></span><span id="backtrack-widget-label">backtrack running</span><span id="backtrack-widget-caret">▾</span>`;
-    statusEl.addEventListener("pointerdown", beginDrag);
     statusEl.addEventListener("click", toggleMenu);
     document.documentElement.appendChild(statusEl);
 
@@ -126,110 +115,11 @@
     menuEl.hidden = true;
     menuEl.innerHTML = `
       <button type="button" data-action="save">Save this page now</button>
-      <button type="button" data-action="highlights"></button>
       <button type="button" data-action="pause"></button>
     `;
     menuEl.addEventListener("click", handleMenuClick);
     document.documentElement.appendChild(menuEl);
-    applyWidgetPosition();
     updatePauseUi();
-  }
-
-  function applyWidgetPosition() {
-    if (!statusEl || !menuEl) {
-      return;
-    }
-
-    const margin = 18;
-    const width = statusEl.offsetWidth || 160;
-    const height = statusEl.offsetHeight || 36;
-    const left = widgetPosition ? widgetPosition.left : Math.max(margin, window.innerWidth - width - margin);
-    const top = widgetPosition ? widgetPosition.top : Math.max(margin, window.innerHeight - height - margin);
-    const clampedLeft = Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin));
-    const clampedTop = Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin));
-    widgetPosition = { left: clampedLeft, top: clampedTop };
-
-    statusEl.style.left = `${clampedLeft}px`;
-    statusEl.style.top = `${clampedTop}px`;
-    statusEl.style.right = "auto";
-    statusEl.style.bottom = "auto";
-
-    const menuWidth = menuEl.offsetWidth || 190;
-    const menuHeight = menuEl.offsetHeight || 90;
-    const menuLeft = Math.min(
-      Math.max(margin, clampedLeft + width - menuWidth),
-      Math.max(margin, window.innerWidth - menuWidth - margin)
-    );
-    let menuTop = clampedTop - menuHeight - 8;
-    if (menuTop < margin) {
-      menuTop = Math.min(window.innerHeight - menuHeight - margin, clampedTop + height + 8);
-    }
-
-    menuEl.style.left = `${menuLeft}px`;
-    menuEl.style.top = `${Math.max(margin, menuTop)}px`;
-    menuEl.style.right = "auto";
-    menuEl.style.bottom = "auto";
-  }
-
-  function beginDrag(event) {
-    if (!statusEl) {
-      return;
-    }
-    if (event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    dragState = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      originLeft: widgetPosition ? widgetPosition.left : statusEl.getBoundingClientRect().left,
-      originTop: widgetPosition ? widgetPosition.top : statusEl.getBoundingClientRect().top,
-      moved: false
-    };
-    statusEl.classList.add("dragging");
-    statusEl.setPointerCapture(event.pointerId);
-    statusEl.addEventListener("pointermove", dragWidget);
-    statusEl.addEventListener("pointerup", endDrag);
-    statusEl.addEventListener("pointercancel", endDrag);
-  }
-
-  function dragWidget(event) {
-    if (!dragState || event.pointerId !== dragState.pointerId) {
-      return;
-    }
-
-    event.preventDefault();
-    const deltaX = event.clientX - dragState.startX;
-    const deltaY = event.clientY - dragState.startY;
-    if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
-      dragState.moved = true;
-    }
-
-    widgetPosition = {
-      left: dragState.originLeft + deltaX,
-      top: dragState.originTop + deltaY
-    };
-    applyWidgetPosition();
-  }
-
-  function endDrag(event) {
-    if (!statusEl || !dragState || event.pointerId !== dragState.pointerId) {
-      return;
-    }
-
-    statusEl.releasePointerCapture(event.pointerId);
-    statusEl.classList.remove("dragging");
-    statusEl.removeEventListener("pointermove", dragWidget);
-    statusEl.removeEventListener("pointerup", endDrag);
-    statusEl.removeEventListener("pointercancel", endDrag);
-
-    if (dragState.moved) {
-      lastDragEndedAt = Date.now();
-    }
-
-    dragState = null;
   }
 
   function setStatus(text) {
@@ -242,18 +132,9 @@
     return sessionStorage.getItem(PAUSE_KEY) === "true";
   }
 
-  function highlightsEnabled() {
-    return sessionStorage.getItem(HIGHLIGHTS_KEY) !== "false";
-  }
-
   function setPaused(paused) {
     sessionStorage.setItem(PAUSE_KEY, String(paused));
     updatePauseUi();
-  }
-
-  function setHighlightsEnabled(enabled) {
-    sessionStorage.setItem(HIGHLIGHTS_KEY, String(enabled));
-    updateHighlightUi();
   }
 
   function updatePauseUi() {
@@ -267,25 +148,7 @@
       ? "Resume automatic capture"
       : "Pause automatic capture";
     if (paused) {
-      clearHighlights();
       setStatus("backtrack paused");
-    }
-  }
-
-  function updateHighlightUi() {
-    if (!menuEl) {
-      return;
-    }
-
-    const enabled = highlightsEnabled();
-    menuEl.querySelector('[data-action="highlights"]').textContent = enabled
-      ? "Hide text highlights"
-      : "Show text highlights";
-
-    if (enabled && !isPaused()) {
-      lastMatchCount = highlightPhrases(flaggedPhrases);
-    } else {
-      clearHighlights();
     }
   }
 
@@ -293,10 +156,6 @@
     if (!menuEl || !statusEl) {
       return;
     }
-    if (Date.now() - lastDragEndedAt < 250) {
-      return;
-    }
-    applyWidgetPosition();
     menuEl.hidden = !menuEl.hidden;
     statusEl.setAttribute("aria-expanded", String(!menuEl.hidden));
   }
@@ -311,17 +170,6 @@
       menuEl.hidden = true;
       statusEl.setAttribute("aria-expanded", "false");
       sendCapture("manual");
-    } else if (button.dataset.action === "highlights") {
-      setHighlightsEnabled(!highlightsEnabled());
-      menuEl.hidden = true;
-      statusEl.setAttribute("aria-expanded", "false");
-      if (!isPaused()) {
-        setStatus(
-          highlightsEnabled() && lastMatchCount
-            ? `backtrack · ${lastMatchCount} marked`
-            : "backtrack running"
-        );
-      }
     } else if (button.dataset.action === "pause") {
       setPaused(!isPaused());
       menuEl.hidden = true;
@@ -331,8 +179,6 @@
       }
     }
   }
-
-  window.addEventListener("resize", applyWidgetPosition);
 
   function visibleText() {
     const clone = document.body ? document.body.cloneNode(true) : null;
@@ -505,26 +351,7 @@
     return mark;
   }
 
-  function clearHighlights() {
-    const marks = [...document.querySelectorAll(`.${MARK_CLASS}`)];
-    for (const mark of marks) {
-      const parent = mark.parentNode;
-      if (!parent) {
-        continue;
-      }
-
-      const text = document.createTextNode(mark.textContent || "");
-      parent.replaceChild(text, mark);
-      parent.normalize();
-    }
-    lastMatchCount = 0;
-  }
-
   function highlightPhrases(phrases) {
-    clearHighlights();
-    if (!highlightsEnabled() || isPaused()) {
-      return 0;
-    }
     let count = 0;
     const normalized = phrases
       .map((phrase) => String(phrase || "").trim())
@@ -670,12 +497,11 @@
       requestSettings()
     ]);
     if (isBlockedUrl(location.href)) {
-      clearHighlights();
       setStatus("backtrack blocked here");
       return;
     }
+    lastMatchCount = highlightPhrases(flaggedPhrases);
     updatePauseUi();
-    updateHighlightUi();
     if (!isPaused()) {
       setStatus(lastMatchCount ? `backtrack · ${lastMatchCount} marked` : "backtrack running");
     }

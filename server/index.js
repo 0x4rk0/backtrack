@@ -1,8 +1,6 @@
 const crypto = require("crypto");
-const dns = require("dns").promises;
 const fs = require("fs");
 const http = require("http");
-const net = require("net");
 const path = require("path");
 
 const PORT = Number(process.env.BACKTRACK_PORT || 4317);
@@ -10,7 +8,15 @@ const DEBUG_MODE = process.env.BACKTRACK_DEBUG || "";
 const DEBUG_ENABLED = DEBUG_MODE === "1" || DEBUG_MODE === "true" || DEBUG_MODE === "full";
 const DEBUG_FULL = DEBUG_MODE === "full";
 const ROOT = path.resolve(__dirname, "..");
-const DATA_DIR = path.join(ROOT, "data", "backtrack");
+const SESSION_ID = (() => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const time = `${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+  const rand = crypto.randomBytes(3).toString("hex");
+  return `${date}_${time}_${rand}`;
+})();
+const DATA_DIR = path.join(ROOT, "data", "sessions", SESSION_ID);
 const CAPTURE_DIR = path.join(DATA_DIR, "captures");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const PHRASES_FILE = path.join(DATA_DIR, "phrases.json");
@@ -27,10 +33,14 @@ const DEFAULT_SETTINGS = {
 };
 
 const JSON_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Content-Type": "application/json; charset=utf-8"
+  "Content-Type": "application/json; charset=utf-8",
+  "X-Content-Type-Options": "nosniff"
+};
+
+const HTML_SECURITY_HEADERS = {
+  "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; frame-src 'self'",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "SAMEORIGIN"
 };
 const eventClients = new Set();
 
@@ -70,32 +80,9 @@ function writePhrases(phrases) {
   return cleaned;
 }
 
-function isAutomaticBlockedSite(site) {
-  const normalized = String(site || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/$/, "");
-  if (!normalized) {
-    return false;
-  }
-
-  const hostname = normalized.split("/")[0].replace(/^\[|\]$/g, "");
-  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-}
-
 function readBlockedSites() {
   ensureStore();
-  const stored = JSON.parse(fs.readFileSync(BLOCKED_SITES_FILE, "utf8"));
-  const cleaned = [
-    ...new Set(stored.map((site) => String(site).trim()).filter(Boolean).filter((site) => !isAutomaticBlockedSite(site)))
-  ];
-
-  if (cleaned.length !== stored.length) {
-    fs.writeFileSync(BLOCKED_SITES_FILE, `${JSON.stringify(cleaned, null, 2)}\n`);
-  }
-
-  return cleaned;
+  return JSON.parse(fs.readFileSync(BLOCKED_SITES_FILE, "utf8"));
 }
 
 function writeBlockedSites(sites) {
@@ -104,7 +91,6 @@ function writeBlockedSites(sites) {
       sites
         .map((site) => String(site).trim().toLowerCase())
         .map((site) => site.replace(/^https?:\/\//, "").replace(/\/$/, ""))
-        .filter((site) => !isAutomaticBlockedSite(site))
         .filter(Boolean)
     )
   ];
@@ -165,66 +151,6 @@ function normalizedUrl(url) {
 function isLocalhost(url) {
   const hostname = hostnameFor(url);
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-}
-
-function isPrivateIp(value) {
-  if (net.isIP(value) === 4) {
-    const parts = value.split(".").map(Number);
-    if (parts[0] === 10 || parts[0] === 127) return true;
-    if (parts[0] === 169 && parts[1] === 254) return true;
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-    if (parts[0] === 192 && parts[1] === 168) return true;
-    if (parts[0] === 0) return true;
-    return false;
-  }
-
-  if (net.isIP(value) === 6) {
-    const normalized = value.toLowerCase();
-    return (
-      normalized === "::1" ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      normalized.startsWith("fe80:") ||
-      normalized.startsWith("::ffff:127.") ||
-      normalized.startsWith("::ffff:10.") ||
-      normalized.startsWith("::ffff:192.168.") ||
-      /^::ffff:172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)
-    );
-  }
-
-  return false;
-}
-
-async function isSafeRemoteUrl(value) {
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch (error) {
-    return false;
-  }
-
-  if (!/^https?:$/i.test(parsed.protocol)) {
-    return false;
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
-    return false;
-  }
-
-  if (net.isIP(hostname)) {
-    return !isPrivateIp(hostname);
-  }
-
-  try {
-    const records = await dns.lookup(hostname, { all: true });
-    if (!records.length) {
-      return false;
-    }
-    return records.every((record) => !isPrivateIp(record.address));
-  } catch (error) {
-    return false;
-  }
 }
 
 function siteMatches(url, site) {
@@ -288,7 +214,6 @@ function broadcastEvent(event, value) {
 
 function handleEvents(req, res) {
   res.writeHead(200, {
-    "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-cache, no-transform",
     "Connection": "keep-alive",
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -333,7 +258,7 @@ function readBody(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 100 * 1024 * 1024) {
+      if (body.length > 25 * 1024 * 1024) {
         reject(new Error("Request body is too large"));
         req.destroy();
       }
@@ -380,6 +305,21 @@ function writeScreenshot(id, screenshot) {
   return `/captures/${filename}`;
 }
 
+function isPrivateHost(hostname) {
+  if (!hostname) return true;
+  const h = hostname.toLowerCase();
+  return (
+    h === "localhost" ||
+    h === "::1" ||
+    h === "0.0.0.0" ||
+    h.startsWith("127.") ||
+    h.startsWith("10.") ||
+    h.startsWith("192.168.") ||
+    h.startsWith("169.254.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+  );
+}
+
 function resolveImageUrl(value, pageUrl) {
   try {
     const parsed = new URL(value, pageUrl);
@@ -387,6 +327,9 @@ function resolveImageUrl(value, pageUrl) {
       return "";
     }
     if (!/\.(png|jpe?g)([?#].*)?$/i.test(parsed.href)) {
+      return "";
+    }
+    if (isPrivateHost(parsed.hostname)) {
       return "";
     }
     return parsed.href;
@@ -427,46 +370,14 @@ function proxiedUrl(url, proxyUrl) {
   return `${proxyUrl}${separator}url=${encodeURIComponent(url)}`;
 }
 
-async function safeFetch(url, settings, redirectCount = 0) {
-  if (redirectCount > 5) {
-    return null;
-  }
-
-  if (!(await isSafeRemoteUrl(url))) {
-    return null;
-  }
-
-  let requestUrl = url;
-  if (settings.proxyUrl) {
-    const proxyTarget = proxiedUrl(url, settings.proxyUrl);
-    if (!(await isSafeRemoteUrl(proxyTarget))) {
-      return null;
-    }
-    requestUrl = proxyTarget;
-  }
-
-  const response = await fetch(requestUrl, {
+async function fetchImage(url, settings) {
+  const response = await fetch(proxiedUrl(url, settings.proxyUrl), {
     headers: {
       "Accept": "image/png,image/jpeg;q=0.9,*/*;q=0.1",
       "User-Agent": "backtrack-local-capture/0.1"
     },
-    redirect: "manual"
+    redirect: "follow"
   });
-
-  if ([301, 302, 303, 307, 308].includes(response.status)) {
-    const location = response.headers.get("location");
-    if (!location) {
-      return null;
-    }
-    const nextUrl = new URL(location, url).href;
-    return safeFetch(nextUrl, settings, redirectCount + 1);
-  }
-
-  return response;
-}
-
-async function fetchImage(url, settings) {
-  const response = await safeFetch(url, settings);
   if (!response.ok) {
     return null;
   }
@@ -525,21 +436,11 @@ function writeSnapshot(id, html) {
     return null;
   }
 
-  let cleaned = html;
-  let previous;
-  do {
-    previous = cleaned;
-    cleaned = cleaned
-      .replace(/<script\b[^<]*(?:(?!<\/script\b[^>]*>)<[^<]*)*<\/script\b[^>]*>/gi, "")
-      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
-      .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
-      .replace(/<embed\b[^>]*>/gi, "")
-      .replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, "")
-      .replace(/<base\b[^>]*>/gi, "")
-      .replace(/(\s)on([a-z]+\s*=)/gi, "$1data-on$2")
-      .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']/gi, "")
-      .replace(/\s(?:href|src|action|formaction|xlink:href)\s*=\s*\S*javascript:[^\s>]+/gi, "");
-  } while (cleaned !== previous);
+  const cleaned = html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "");
   const filename = `${id}.html`;
   fs.writeFileSync(path.join(CAPTURE_DIR, filename), cleaned);
   return `/captures/${filename}`;
@@ -659,7 +560,7 @@ function handleCaptureView(req, res, id) {
     return;
   }
 
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", ...HTML_SECURITY_HEADERS });
   res.end(captureViewHtml(row));
 }
 
@@ -678,7 +579,7 @@ function handleReader(req, res, id) {
     return;
   }
 
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", ...HTML_SECURITY_HEADERS });
   res.end(readerHtml(row, fs.readFileSync(textPath, "utf8")));
 }
 
@@ -689,8 +590,43 @@ function clearCaptures() {
       fs.rmSync(path.join(CAPTURE_DIR, entry), { force: true, recursive: true });
     }
   }
-  fs.mkdirSync(CAPTURE_DIR, { recursive: true });
-  broadcastEvent("screenshot", { type: "cleared" });
+}
+
+function deleteCapture(id) {
+  const rows = readIndex();
+  const idx = rows.findIndex((row) => row.id === id);
+  if (idx === -1) {
+    return false;
+  }
+
+  const row = rows[idx];
+  rows.splice(idx, 1);
+  writeIndex(rows);
+
+  for (const urlPath of [row.textFile, row.screenshotFile, row.htmlFile].filter(Boolean)) {
+    try {
+      fs.rmSync(path.join(DATA_DIR, urlPath), { force: true });
+    } catch {}
+  }
+  try {
+    fs.rmSync(path.join(CAPTURE_DIR, `${id}-images`), { recursive: true, force: true });
+  } catch {}
+
+  return true;
+}
+
+function handleDeleteCapture(req, res, id) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    sendJson(res, 400, { error: "Invalid capture id" });
+    return;
+  }
+
+  if (!deleteCapture(id)) {
+    sendJson(res, 404, { error: "Not found" });
+    return;
+  }
+
+  sendJson(res, 200, { ok: true });
 }
 
 function cleanMatches(matches) {
@@ -892,22 +828,6 @@ function contentType(filePath) {
   return "application/octet-stream";
 }
 
-function responseHeadersFor(filePath) {
-  const headers = {
-    "Content-Type": contentType(filePath),
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer"
-  };
-
-  if (filePath.startsWith(CAPTURE_DIR) && filePath.endsWith(".html")) {
-    headers["Content-Security-Policy"] =
-      "sandbox; default-src 'none'; img-src 'self' data: http: https:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; object-src 'none'; media-src 'none'; child-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
-    headers["Cross-Origin-Resource-Policy"] = "same-origin";
-  }
-
-  return headers;
-}
-
 function serveFile(res, filePath) {
   fs.readFile(filePath, (error, data) => {
     if (error) {
@@ -915,7 +835,11 @@ function serveFile(res, filePath) {
       res.end("Not found");
       return;
     }
-    res.writeHead(200, responseHeadersFor(filePath));
+    const isHtml = filePath.endsWith(".html");
+    const headers = isHtml
+      ? { "Content-Type": contentType(filePath), ...HTML_SECURITY_HEADERS }
+      : { "Content-Type": contentType(filePath), "X-Content-Type-Options": "nosniff" };
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
@@ -960,7 +884,8 @@ http
   .createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (req.method === "OPTIONS") {
-      sendJson(res, 204, {});
+      res.writeHead(405);
+      res.end();
     } else if (req.method === "POST" && url.pathname === "/api/captures") {
       handleCreateCapture(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/search") {
@@ -974,6 +899,8 @@ http
     } else if (req.method === "POST" && url.pathname === "/api/clear") {
       clearCaptures();
       sendJson(res, 200, { ok: true });
+    } else if (req.method === "POST" && /^\/api\/captures\/[0-9a-f-]+\/delete$/i.test(url.pathname)) {
+      handleDeleteCapture(req, res, url.pathname.split("/")[3]);
     } else if ((req.method === "GET" || req.method === "POST") && url.pathname === "/api/phrases") {
       handlePhrases(req, res);
     } else if ((req.method === "GET" || req.method === "POST") && url.pathname === "/api/blocked-sites") {
@@ -988,6 +915,7 @@ http
   })
   .listen(PORT, "127.0.0.1", () => {
     console.log(`backtrack listening on http://127.0.0.1:${PORT}`);
+    console.log(`backtrack session: data/sessions/${SESSION_ID}`);
     if (DEBUG_ENABLED) {
       console.log(`backtrack debug logging enabled (${DEBUG_FULL ? "full payloads" : "summaries"})`);
     }

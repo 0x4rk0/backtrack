@@ -21,7 +21,7 @@ npm --version
 Clone the repository:
 
 ```sh
-git clone https://github.com/0x4rk0/backtrack.git
+git clone <repository-url>
 cd backtrack
 ```
 
@@ -75,6 +75,14 @@ http://127.0.0.1:4317
 
 Keep this terminal window open while using the browser add-on.
 
+To use a different port:
+
+```sh
+BACKTRACK_PORT=5000 npm start
+```
+
+If you change the port, also update `SERVER_ORIGIN` in `extension/src/background.js` and rebuild the extensions.
+
 ## Normal Browser Add-on Install
 
 Chrome and Firefox stable releases require add-ons to be signed for normal install. The generated release packages are the artifacts to submit for signing:
@@ -126,6 +134,17 @@ Search results include:
 Screenshots capture the current visible browser viewport. backtrack does not scroll the page while capturing.
 The dashboard refreshes automatically and groups captures by base URL.
 Local page snapshots remove scripts and are meant for review, not for preserving a fully interactive copy of the original site.
+
+## Hamburger Menu
+
+The hamburger menu includes:
+
+- **Findings** for sort mode and clearing captures.
+- **Flagged phrases** with one submenu item per phrase.
+- **Blocked sites** for quick review of skip rules.
+- **Settings** for image saving, maximum images per capture, capture delay, proxy URL, dashboard density, and accent color.
+
+When image saving is enabled, backtrack downloads JPG and PNG images referenced by the captured page HTML. Proxy URLs can include `{url}` as a placeholder; otherwise backtrack appends the target URL as a `url` query parameter.
 
 ## Add OSINT Flags
 

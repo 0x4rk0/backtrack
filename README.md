@@ -1,95 +1,95 @@
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/codybernardy)
-# Backtrack
+# backtrack
 
-Backtrack is a local browser capture tool. A Firefox or Chrome extension saves page text, screenshots, and related metadata to a local Node.js server so you can review and search what you visited.
+backtrack is a local OSINT webpage memory tool. A Chrome or Firefox extension scans pages as you browse, sends extracted text and a screenshot to a local Node.js server, and the server gives you a searchable web UI with the original URL, title, capture time, matching text, saved page images, and screenshot.
 
-<img width="1440" height="780" alt="Screenshot 2026-05-21 at 22 11 47" src="https://github.com/user-attachments/assets/de1c1130-49dc-451c-b9f6-b3de668bd49f" />
+Screenshots capture the current visible browser viewport.
 
-<img width="1245" height="674" alt="Screenshot 2026-05-21 at 22 25 11" src="https://github.com/user-attachments/assets/65829468-8d99-4f51-95e1-70d61ced6788" />
+The server also supports flagged names and phrases. Add entries such as names, handles, companies, or keywords in the web UI. When a flagged phrase appears on a captured page, backtrack highlights it on the page before capture and stores it in a dedicated flagged section with context.
 
-<img width="1434" height="786" alt="Screenshot 2026-05-21 at 22 12 07" src="https://github.com/user-attachments/assets/c7437d6a-6fa2-417b-b26c-f5a2a91c0444" />
+Use the hamburger menu in the web UI to sort findings, clear captures, jump into individual flagged phrases, review blocked sites, and tune product settings such as image saving, capture delay, proxy URL, density, and accent color.
 
-
-## Requirements
-
-- Node.js 18 or newer
-- npm
-- Firefox or Chrome/Chromium
-- Git
-
-## Get Started
-
-1. Clone the repo and enter the project folder:
-
-```sh
-git clone https://github.com/0x4rk0/backtrack.git
-cd backtrack
-```
-
-2. Install project metadata:
-
-```sh
-npm install
-```
-
-3. Build the browser add-ons:
-
-```sh
-npm run build:extensions
-```
-
-4. Start the local server:
+## Start the Local Server
 
 ```sh
 npm start
 ```
 
-5. Open the local web UI:
+The server listens on `http://127.0.0.1:4317` by default. Set `BACKTRACK_PORT` to use another port.
 
-```text
-http://127.0.0.1:4317
+Captured data is stored locally in `data/backtrack/`:
+
+- `index.json` stores capture metadata.
+- `captures/*.txt` stores extracted page text.
+- `captures/*.html` stores static local page snapshots for new captures.
+- `captures/*.png` stores screenshots.
+- `captures/*-images/` stores downloaded JPG/PNG page images.
+- `settings.json` stores product settings.
+
+## Build the Browser Add-ons
+
+```sh
+npm run build:extensions
 ```
 
-## Install the Browser Add-on
+Load the generated extension directories:
 
-### Firefox
+- Chrome: `extension/dist/chrome`
+- Firefox: `extension/dist/firefox`
 
-1. Open:
+Both add-ons send page captures to `http://127.0.0.1:4317/api/captures`.
 
-```text
-about:debugging#/runtime/this-firefox
+To create release packages:
+
+```sh
+npm run package:extensions
 ```
 
-2. Click `Load Temporary Add-on`
-3. Select `manifest.json` located in `/extension/dist/firefox/`
+This creates:
 
-### Chrome or Chromium
+- `extension/releases/backtrack-chrome.zip` for Chrome Web Store upload
+- `extension/releases/backtrack-firefox.xpi` for Firefox signing or self-distribution after signing
 
-1. Open:
+Chrome and Firefox stable releases require signed add-ons for normal install. Use the generated packages for store submission/signing; unpacked local loading is only for development.
 
-```text
-chrome://extensions
+## Debug Capture Data
+
+Run the server with debug logging to see capture requests as they arrive:
+
+```sh
+BACKTRACK_DEBUG=1 npm start
 ```
 
-2. Turn on `Developer mode`
-3. Click `Load unpacked`
-4. Select `extension/dist/chrome`
+Build the add-ons with the same flag to log payloads in the browser extension console:
 
-## First Use
+```sh
+BACKTRACK_DEBUG=1 npm run build:extensions
+```
 
-1. Leave `npm start` running
-2. Open a normal `http://` or `https://` page in the browser with the add-on loaded
-3. Wait a moment for the page to be captured
-4. Return to `http://127.0.0.1:4317`
-5. Use `Recent`, `Flagged`, or `Images captured` to review saved captures
+Use `BACKTRACK_DEBUG=full` instead of `1` to print full page text and screenshot data URLs. The default debug mode prints metadata, phrase matches, text length, screenshot length, and a short text preview.
 
-## Stored Data
+## Flag Names and Phrases
 
-Backtrack saves local capture data in `data/backtrack/`:
+1. Start the server with `npm start`.
+2. Open `http://127.0.0.1:4317`.
+3. Add one flagged name or phrase per line.
+4. Browse normally with the extension enabled.
+5. Open the **Flagged** tab to review captures containing those phrases.
 
-- `index.json` stores capture metadata
-- `captures/*.txt` stores extracted page text
-- `captures/*.html` stores static page snapshots
-- `captures/*.png` stores screenshots
-- `captures/*-images/` stores downloaded JPG/PNG page images
-- `settings.json` stores local product settings
+The browser add-on also places a small backtrack status pill on webpages. Click it to manually save the current page.
+
+New captures include a formatted reader view and a capture view that shows the screenshot beside the static local page snapshot. The dashboard refreshes automatically and groups captures by base URL. The snapshot removes scripts and is meant for review, not for preserving a fully interactive copy of the original site.
+
+When image saving is enabled, the server extracts JPG and PNG URLs from the captured HTML and downloads them into the local capture folder. If a proxy URL is configured in settings, image fetches use that proxy. A proxy URL can include `{url}` as a placeholder, or backtrack appends `?url=<encoded-url>` / `&url=<encoded-url>`.
+
+## Block Capture Sites
+
+The add-on never captures `127.0.0.1`, `localhost`, or `[::1]`.
+
+To block more sites, open `http://127.0.0.1:4317` and add one host or URL path per line in **Blocked capture sites**. Examples:
+
+- `example.com` blocks `example.com` and subdomains.
+- `example.com/private` blocks URLs containing that path.
+
+## Privacy Notes
+
+backtrack stores the text of pages you visit and screenshots of the visible tab. Treat `data/backtrack/` as sensitive. Do not commit captured data.
