@@ -437,7 +437,7 @@ function writeSnapshot(id, html) {
   }
 
   const cleaned = html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<script\b[^<]*(?:(?!<\/script\b)[^<]|<(?!\/script\b))*<\/script\b[^>]*>/gi, "")
     .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
     .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
     .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "");
