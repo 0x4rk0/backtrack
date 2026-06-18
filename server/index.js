@@ -436,8 +436,14 @@ function writeSnapshot(id, html) {
     return null;
   }
 
-  const cleaned = html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+  let cleaned = html;
+  let previous;
+  do {
+    previous = cleaned;
+    cleaned = cleaned.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+  } while (cleaned !== previous);
+
+  cleaned = cleaned
     .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
     .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
     .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "");
